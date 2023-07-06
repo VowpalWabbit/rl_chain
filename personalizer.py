@@ -157,9 +157,9 @@ class PersonalizerChain(Chain):
         else:
             self.workspace = vw.Workspace(vw_cmd)
 
-    user_history: str = "user_history"  #: :meta private:
+    context: str = "context"  #: :meta private:
 
-    initial_prompt_key: str = "initial_prompt"  #: :meta private:
+    text_to_personalize_key: str = "text_to_personalize"  #: :meta private:
     output_key: str = "answer"  #: :meta private:
     prompt: BasePromptTemplate = PROMPT
 
@@ -175,7 +175,7 @@ class PersonalizerChain(Chain):
 
         :meta private:
         """
-        return [self.initial_prompt_key, self.user_history]
+        return [self.text_to_personalize_key, self.context]
 
     @property
     def output_keys(self) -> List[str]:
@@ -213,14 +213,14 @@ class PersonalizerChain(Chain):
         run_manager: Optional[CallbackManagerForChainRun] = None,
     ) -> Dict[str, str]:
         _run_manager = run_manager or CallbackManagerForChainRun.get_noop_manager()
-        _run_manager.on_text(inputs[self.initial_prompt_key], verbose=self.verbose)
+        _run_manager.on_text(inputs[self.text_to_personalize_key], verbose=self.verbose)
 
-        init_prompt = inputs[self.initial_prompt_key]
+        init_prompt = inputs[self.text_to_personalize_key]
         print(f"THE PREDS I GOT: {preds}")
 
         t = self.llm_chain.predict(
             actions=[preds],
-            initial_prompt=init_prompt,
+            text_to_personalize=init_prompt,
             callbacks=_run_manager.get_child(),
         )
         _run_manager.on_text(t, color="green", verbose=self.verbose)
@@ -304,15 +304,15 @@ class ContextualBanditPersonalizerChain(PersonalizerChain):
         run_manager: Optional[CallbackManagerForChainRun] = None,
     ) -> Dict[str, str]:
         _run_manager = run_manager or CallbackManagerForChainRun.get_noop_manager()
-        _run_manager.on_text(inputs[self.initial_prompt_key], verbose=self.verbose)
+        _run_manager.on_text(inputs[self.text_to_personalize_key], verbose=self.verbose)
 
-        init_prompt = inputs[self.initial_prompt_key]
-        user_history = inputs[self.user_history]
+        init_prompt = inputs[self.text_to_personalize_key]
+        context = inputs[self.context]
         text_parser = vw.TextFormatParser(self.workspace)
 
         context_embed = ""
         feat = 0
-        for emb in self.sbert_model.encode(init_prompt + " " + user_history):
+        for emb in self.sbert_model.encode(init_prompt + " " + context):
             context_embed += f"{feat}:{emb} "
             feat += 1
         # Only supports single example per prompt
@@ -420,3 +420,9 @@ class ContextualBanditPersonalizerChain(PersonalizerChain):
         )
         multi_ex = parse_lines(text_parser, vw_ex)
         self.workspace.learn_one(multi_ex)
+
+
+# ### TODO:
+# - simple joining
+# - figure out how prompt is going to be used by e.g. example selector
+# - add a callback for them to define the features they want
