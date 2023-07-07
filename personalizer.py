@@ -102,8 +102,8 @@ class PersonalizerChain(Chain):
 
         if model_loading:
             vwfile = None
-            files = glob.glob(f"{self.model_save_dir}/.*.vw")
-            pattern = r"\model-(\d+)\.vw"
+            files = glob.glob(f"{self.model_save_dir}/*.vw")
+            pattern = r"model-(\d+)\.vw"
             highest_checkpoint = 0
             for file in files:
                 match = re.search(pattern, file)
