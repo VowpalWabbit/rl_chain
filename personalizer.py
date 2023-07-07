@@ -35,13 +35,14 @@ class PersonalizerChain(Chain):
     Attributes:
         vw_workspace_type (Type): The type of personalization algorithm to be used by the VW model.
         embeddings (FeatureEmbeddings, optional): The type of embeddings to be used for feature representation. Defaults to BERT.
-        model_loading (bool, optional): If set to True, the chain will attempt to load an existing VW model from the latest checkpoint file in the current directory. If set to False, it will start training from scratch, potentially overwriting existing files. Defaults to True.
+        model_loading (bool, optional): If set to True, the chain will attempt to load an existing VW model from the latest checkpoint file in the {model_save_dir} directory (current directory if none specified). If set to False, it will start training from scratch, potentially overwriting existing files. Defaults to True.
         actions (List[str], optional): A list of action strings for VW to choose from.
         large_action_spaces (bool, optional): If set to True and vw_cmd has not been specified in the constructor, it will enable large action spaces
         vw_cmd (List[str], optional): Advanced users can set the VW command line to whatever they want, as long as it is compatible with the Type that is specified (Type Enum)
+        model_save_dir (str, optional): The directory to save the VW model to. Defaults to the current directory.
 
     Notes:
-        The class creates a VW model instance using the provided arguments. Before the chain object is destroyed the save_progress() function can be called. If it is called, the learned VW model is saved to a file in the current directory named `.model-<checkpoint>.vw`. Checkpoints start at 1 and increment monotonically.
+        The class creates a VW model instance using the provided arguments. Before the chain object is destroyed the save_progress() function can be called. If it is called, the learned VW model is saved to a file in the current directory named `model-<checkpoint>.vw`. Checkpoints start at 1 and increment monotonically.
         When making predictions, VW is first called to choose action(s) which are then passed into the prompt with the key `{actions}`. After action selection, the LLM (Language Model) is called with the prompt populated by the chosen action(s), and the response is returned.
     """
 
@@ -55,6 +56,8 @@ class PersonalizerChain(Chain):
     actions: List = []
 
     next_checkpoint: int = None
+
+    model_save_dir: str = "./"
 
     class Type(Enum):
         """
@@ -99,8 +102,8 @@ class PersonalizerChain(Chain):
 
         if model_loading:
             vwfile = None
-            files = glob.glob("./.*.vw")
-            pattern = r"\.model-(\d+)\.vw"
+            files = glob.glob(f"{self.model_save_dir}/.*.vw")
+            pattern = r"\model-(\d+)\.vw"
             highest_checkpoint = 0
             for file in files:
                 match = re.search(pattern, file)
@@ -151,7 +154,8 @@ class PersonalizerChain(Chain):
 
         print(f"vw command: {vw_cmd}")
         # initialize things
-        self.set_actions(actions)
+        if actions:
+            self.set_actions(actions)
         if serialized_workspace:
             self.workspace = vw.Workspace(vw_cmd, model_data=serialized_workspace)
         else:
@@ -159,7 +163,6 @@ class PersonalizerChain(Chain):
 
     context: str = "context"  #: :meta private:
 
-    text_to_personalize_key: str = "text_to_personalize"  #: :meta private:
     output_key: str = "answer"  #: :meta private:
     prompt: BasePromptTemplate = PROMPT
 
@@ -175,7 +178,7 @@ class PersonalizerChain(Chain):
 
         :meta private:
         """
-        return [self.text_to_personalize_key, self.context]
+        return [self.context]
 
     @property
     def output_keys(self) -> List[str]:
@@ -184,6 +187,17 @@ class PersonalizerChain(Chain):
         :meta private:
         """
         return [self.output_key]
+
+    def set_actions_and_embeddings(self, actions: List[str], action_embeddings: List):
+        """
+        At any time new actions and their embeddings can be set by this function call
+
+        Attributes:
+            actions: a list of strings containing the actions
+            action_embeddings: a list containing the embeddings of the action strings
+        """
+        self.actions = actions
+        self.action_embeddings = action_embeddings
 
     def set_actions(self, actions: List[str]):
         """
@@ -198,7 +212,7 @@ class PersonalizerChain(Chain):
         action_feat_ind_orig = len(self.sbert_model.encode(""))
         action_feat_ind = action_feat_ind_orig
         for d in actions:
-            action_str = d.name + " " + d.desc
+            action_str = d
             action_embed = ""
             for emb in self.sbert_model.encode(action_str):
                 action_embed += f"{action_feat_ind}:{emb} "
@@ -213,14 +227,12 @@ class PersonalizerChain(Chain):
         run_manager: Optional[CallbackManagerForChainRun] = None,
     ) -> Dict[str, str]:
         _run_manager = run_manager or CallbackManagerForChainRun.get_noop_manager()
-        _run_manager.on_text(inputs[self.text_to_personalize_key], verbose=self.verbose)
 
-        init_prompt = inputs[self.text_to_personalize_key]
-        print(f"THE PREDS I GOT: {preds}")
+        # print(f"THE PREDS I GOT: {preds}")
 
         t = self.llm_chain.predict(
             actions=[preds],
-            text_to_personalize=init_prompt,
+            **inputs,
             callbacks=_run_manager.get_child(),
         )
         _run_manager.on_text(t, color="green", verbose=self.verbose)
@@ -239,17 +251,17 @@ class PersonalizerChain(Chain):
         This function should be called whenever there is a need to save the progress of the VW (Vowpal Wabbit) model within the chain. It saves the current state of the VW model to a file.
 
         File Naming Convention:
-          The file will be named using the pattern `.model-<checkpoint>.vw`, where `<checkpoint>` is a monotonically increasing number. The numbering starts from 1, and increments by 1 for each subsequent save. If there are already saved checkpoints, the number used for `<checkpoint>` will be the next in the sequence.
+          The file will be named using the pattern `model-<checkpoint>.vw`, where `<checkpoint>` is a monotonically increasing number. The numbering starts from 1, and increments by 1 for each subsequent save. If there are already saved checkpoints, the number used for `<checkpoint>` will be the next in the sequence.
 
         Example:
-            If there are already two saved checkpoints, `.model-1.vw` and `.model-2.vw`, the next time this function is called, it will save the model as `.model-3.vw`.
+            If there are already two saved checkpoints, `model-1.vw` and `model-2.vw`, the next time this function is called, it will save the model as `model-3.vw`.
 
         Note:
             Be cautious when deleting or renaming checkpoint files manually, as this could cause the function to reuse checkpoint numbers.
         """
         serialized_workspace = self.workspace.serialize()
-        print(f"storing in: .model-{self.next_checkpoint}.vw")
-        with open(f".model-{self.next_checkpoint}.vw", "wb") as f:
+        print(f"storing in: {self.model_save_dir}/model-{self.next_checkpoint}.vw")
+        with open(f"{self.model_save_dir}/model-{self.next_checkpoint}.vw", "wb") as f:
             f.write(serialized_workspace)
 
     @property
@@ -304,15 +316,13 @@ class ContextualBanditPersonalizerChain(PersonalizerChain):
         run_manager: Optional[CallbackManagerForChainRun] = None,
     ) -> Dict[str, str]:
         _run_manager = run_manager or CallbackManagerForChainRun.get_noop_manager()
-        _run_manager.on_text(inputs[self.text_to_personalize_key], verbose=self.verbose)
 
-        init_prompt = inputs[self.text_to_personalize_key]
         context = inputs[self.context]
         text_parser = vw.TextFormatParser(self.workspace)
 
         context_embed = ""
         feat = 0
-        for emb in self.sbert_model.encode(init_prompt + " " + context):
+        for emb in self.sbert_model.encode(context):
             context_embed += f"{feat}:{emb} "
             feat += 1
         # Only supports single example per prompt
@@ -321,7 +331,7 @@ class ContextualBanditPersonalizerChain(PersonalizerChain):
         self.latest_context_emb = context_embed
         preds = self.workspace.predict_one(multi_ex)
 
-        print(f"preds: {preds}")
+        # print(f"preds: {preds}")
         prob_sum = sum(prob for _, prob in preds)
         probabilities = [prob / prob_sum for _, prob in preds]
 
@@ -334,8 +344,8 @@ class ContextualBanditPersonalizerChain(PersonalizerChain):
         sampled_action = sampled_ap[0]
         self.latest_action = sampled_action
         self.latest_prob = sampled_ap[1]
-        # winer_text = actions[best_action].name + " " + actions[best_action].tags
-        winer_text = self.actions[sampled_action].name
+
+        winer_text = self.actions[sampled_action]
 
         return super()._call(run_manager=run_manager, inputs=inputs, preds=winer_text)
 
@@ -404,7 +414,7 @@ class ContextualBanditPersonalizerChain(PersonalizerChain):
         multi_ex = parse_lines(text_parser, vw_ex)
         self.workspace.learn_one(multi_ex)
 
-    def learn_with_specific_cost(self, index: int, inputs: Dict[str, Any], cost: int):
+    def learn_with_specific_cost(self, inputs: Dict[str, Any], cost: int):
         """
         Learn will be called with the cost specified
 
@@ -413,7 +423,7 @@ class ContextualBanditPersonalizerChain(PersonalizerChain):
         """
         text_parser = vw.TextFormatParser(self.workspace)
 
-        cb_label = (index, cost, self.latest_prob)
+        cb_label = (self.latest_action, cost, self.latest_prob)
 
         vw_ex = self.to_vw_example_format(
             self.latest_context_emb, self.action_embeddings, cb_label
@@ -424,5 +434,4 @@ class ContextualBanditPersonalizerChain(PersonalizerChain):
 
 # ### TODO:
 # - simple joining
-# - figure out how prompt is going to be used by e.g. example selector
 # - add a callback for them to define the features they want
