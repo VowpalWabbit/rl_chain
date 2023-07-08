@@ -349,11 +349,7 @@ class ContextualBanditPersonalizerChain(PersonalizerChain):
 
         return super()._call(run_manager=run_manager, inputs=inputs, preds=winer_text)
 
-    def good_recommendation(
-        self,
-        index: int,
-        inputs: Dict[str, Any],
-    ):
+    def good_recommendation(self):
         """
         Learn will be called with a cost of -1 (cost range if good/neutural/bad are used is [-1, 1])
 
@@ -363,18 +359,14 @@ class ContextualBanditPersonalizerChain(PersonalizerChain):
         text_parser = vw.TextFormatParser(self.workspace)
 
         # reward means the smallest cost
-        cb_label = (index, -1, self.latest_prob)
+        cb_label = (self.latest_action, -1, self.latest_prob)
         vw_ex = self.to_vw_example_format(
             self.latest_context_emb, self.action_embeddings, cb_label
         )
         multi_ex = parse_lines(text_parser, vw_ex)
         self.workspace.learn_one(multi_ex)
 
-    def neutral_recommendation(
-        self,
-        index: int,
-        inputs: Dict[str, Any],
-    ):
+    def neutral_recommendation(self):
         """
         Learn will be called with a cost of 0 (cost range if good/neutural/bad are used is [-1, 1])
 
@@ -384,7 +376,7 @@ class ContextualBanditPersonalizerChain(PersonalizerChain):
         text_parser = vw.TextFormatParser(self.workspace)
 
         # punish means the intermediate cost
-        cb_label = (index, 0, self.latest_prob)
+        cb_label = (self.latest_action, 0, self.latest_prob)
 
         vw_ex = self.to_vw_example_format(
             self.latest_context_emb, self.action_embeddings, cb_label
@@ -392,11 +384,7 @@ class ContextualBanditPersonalizerChain(PersonalizerChain):
         multi_ex = parse_lines(text_parser, vw_ex)
         self.workspace.learn_one(multi_ex)
 
-    def bad_recommendation(
-        self,
-        index: int,
-        inputs: Dict[str, Any],
-    ):
+    def bad_recommendation(self):
         """
         Learn will be called with a cost of 1 (cost range if good/neutural/bad are used is [-1, 1])
 
@@ -406,7 +394,7 @@ class ContextualBanditPersonalizerChain(PersonalizerChain):
         text_parser = vw.TextFormatParser(self.workspace)
 
         # punish means the biggest cost
-        cb_label = (index, 1, self.latest_prob)
+        cb_label = (self.latest_action, 1, self.latest_prob)
 
         vw_ex = self.to_vw_example_format(
             self.latest_context_emb, self.action_embeddings, cb_label
@@ -414,7 +402,7 @@ class ContextualBanditPersonalizerChain(PersonalizerChain):
         multi_ex = parse_lines(text_parser, vw_ex)
         self.workspace.learn_one(multi_ex)
 
-    def learn_with_specific_cost(self, inputs: Dict[str, Any], cost: int):
+    def learn_with_specific_cost(self, cost: int):
         """
         Learn will be called with the cost specified
 
