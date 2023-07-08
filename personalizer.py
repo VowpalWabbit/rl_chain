@@ -9,8 +9,9 @@ from typing import Any, Dict, List, Optional, Tuple
 from sentence_transformers import SentenceTransformer
 import vowpal_wabbit_next as vw
 from .personalizer_prompt import PROMPT
+from langchain.prompts.prompt import PromptTemplate
 
-from pydantic import Extra, Field, root_validator
+from pydantic import Extra
 import numpy as np
 
 from langchain.base_language import BaseLanguageModel
@@ -146,7 +147,7 @@ class PersonalizerChain(Chain):
     context: str = "context"  #: :meta private:
 
     output_key: str = "answer"  #: :meta private:
-    prompt: BasePromptTemplate = PROMPT
+    prompt: PromptTemplate = PROMPT
 
     class Config:
         """Configuration for this pydantic object."""
@@ -254,7 +255,7 @@ class PersonalizerChain(Chain):
     def from_llm(
         cls,
         llm: BaseLanguageModel,
-        prompt: BasePromptTemplate = PROMPT,
+        prompt: PromptTemplate = PROMPT,
         **kwargs: Any,
     ) -> ContextualBanditPersonalizerChain:
         llm_chain = LLMChain(llm=llm, prompt=prompt)
