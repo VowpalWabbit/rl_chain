@@ -34,7 +34,7 @@ class PersonalizerChain(Chain):
 
     Attributes:
         vw_workspace_type (Type): The type of personalization algorithm to be used by the VW model.
-        embeddings (FeatureEmbeddings, optional): The type of embeddings to be used for feature representation. Defaults to BERT.
+        embeddings_model (SentenceTransformer, optional): The type of embeddings to be used for feature representation. Defaults to BERT.
         model_loading (bool, optional): If set to True, the chain will attempt to load an existing VW model from the latest checkpoint file in the {model_save_dir} directory (current directory if none specified). If set to False, it will start training from scratch, potentially overwriting existing files. Defaults to True.
         actions (List[str], optional): A list of action strings for VW to choose from.
         large_action_spaces (bool, optional): If set to True and vw_cmd has not been specified in the constructor, it will enable large action spaces
@@ -50,7 +50,7 @@ class PersonalizerChain(Chain):
     llm: Optional[BaseLanguageModel] = None
 
     workspace: vw.Workspace = None
-    sbert_model: SentenceTransformer = None
+    embeddings_model: SentenceTransformer = None
 
     action_embeddings: List = []
     actions: List = []
@@ -71,23 +71,10 @@ class PersonalizerChain(Chain):
         CONTEXTUAL_BANDITS = (1,)
         CONDITIONAL_CONTEXTUAL_BANDITS = (2,)
 
-    class FeatureEmbeddings(Enum):
-        """
-        Enumeration to define the type of embeddings used to featurize the string context and actions in the VW model.
-
-        Note:
-            The use of a different embedding type with a pre-existing model may result in undefined behavior.
-
-        Attributes:
-            BERT (int): Indicates the use of BERT embeddings.
-        """
-
-        BERT = 2
-
     def __init__(
         self,
         vw_workspace_type: Type,
-        embeddings=FeatureEmbeddings.BERT,
+        embeddings_model: SentenceTransformer = SentenceTransformer("bert-base-nli-mean-tokens"),
         model_loading=True,
         large_action_spaces=False,
         vw_cmd=[],
@@ -147,10 +134,7 @@ class PersonalizerChain(Chain):
         else:
             raise ValueError("No other vw types supported yet")
 
-        if embeddings == PersonalizerChain.FeatureEmbeddings.BERT:
-            self.sbert_model = SentenceTransformer("bert-base-nli-mean-tokens")
-        else:
-            raise ValueError("No other sentence transformers supported yet")
+        self.embeddings_model = embeddings_model
 
         print(f"vw command: {vw_cmd}")
         # initialize things
@@ -209,12 +193,12 @@ class PersonalizerChain(Chain):
         # Build action embeddings
         self.action_embeddings = []
         self.actions = actions
-        action_feat_ind_orig = len(self.sbert_model.encode(""))
+        action_feat_ind_orig = len(self.embeddings_model.encode(""))
         action_feat_ind = action_feat_ind_orig
         for d in actions:
             action_str = d
             action_embed = ""
-            for emb in self.sbert_model.encode(action_str):
+            for emb in self.embeddings_model.encode(action_str):
                 action_embed += f"{action_feat_ind}:{emb} "
                 action_feat_ind += 1
             action_feat_ind = action_feat_ind_orig
@@ -322,7 +306,7 @@ class ContextualBanditPersonalizerChain(PersonalizerChain):
 
         context_embed = ""
         feat = 0
-        for emb in self.sbert_model.encode(context):
+        for emb in self.embeddings_model.encode(context):
             context_embed += f"{feat}:{emb} "
             feat += 1
         # Only supports single example per prompt
