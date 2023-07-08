@@ -4,7 +4,7 @@ from __future__ import annotations
 import logging
 import glob
 import re
-from typing import Any, Dict, List, Optional
+from typing import Any, Dict, List, Optional, Tuple
 
 from sentence_transformers import SentenceTransformer
 import vowpal_wabbit_next as vw
@@ -17,8 +17,6 @@ from langchain.base_language import BaseLanguageModel
 from langchain.callbacks.manager import CallbackManagerForChainRun
 from langchain.chains.base import Chain
 from langchain.chains.llm import LLMChain
-from langchain.prompts.base import BasePromptTemplate
-from langchain.schema import OutputParserException
 from enum import Enum
 
 logger = logging.getLogger(__name__)
@@ -53,7 +51,7 @@ class PersonalizerChain(Chain):
     embeddings_model: SentenceTransformer = None
 
     action_embeddings: List = []
-    actions: List = []
+    actions: List = [str]
 
     next_checkpoint: int = None
 
@@ -275,7 +273,7 @@ class PersonalizerChain(Chain):
 
 
 class ContextualBanditPersonalizerChain(PersonalizerChain):
-    latest_context_emb: List = None
+    latest_context_emb: str = None
     latest_prob: float = None
     latest_action: int = None
 
@@ -315,23 +313,20 @@ class ContextualBanditPersonalizerChain(PersonalizerChain):
         self.latest_context_emb = context_embed
         preds = self.workspace.predict_one(multi_ex)
 
-        # print(f"preds: {preds}")
         prob_sum = sum(prob for _, prob in preds)
         probabilities = [prob / prob_sum for _, prob in preds]
 
         ## explore
         sampled_index = np.random.choice(len(preds), p=probabilities)
         sampled_ap = preds[sampled_index]
-        ## exploit
-        # sampled_ap = max(preds, key=lambda x : x[1])
 
         sampled_action = sampled_ap[0]
         self.latest_action = sampled_action
         self.latest_prob = sampled_ap[1]
 
-        winer_text = self.actions[sampled_action]
+        predicted_action_str = self.actions[sampled_action]
 
-        return super()._call(run_manager=run_manager, inputs=inputs, preds=winer_text)
+        return super()._call(run_manager=run_manager, inputs=inputs, preds=predicted_action_str)
 
     def good_recommendation(self):
         """
