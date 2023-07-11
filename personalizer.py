@@ -4,11 +4,12 @@ from __future__ import annotations
 import logging
 import glob
 import re
-from typing import Any, Dict, List, Optional, Tuple
+from typing import Any, Dict, List, Optional
 
 from sentence_transformers import SentenceTransformer
 import vowpal_wabbit_next as vw
 from .personalizer_prompt import PROMPT
+from .response_checker import SelfResponseChecker
 from langchain.prompts.prompt import PromptTemplate
 
 from pydantic import Extra
@@ -46,17 +47,18 @@ class PersonalizerChain(Chain):
     """
 
     llm_chain: LLMChain
-    llm: Optional[BaseLanguageModel] = None
-
     workspace: vw.Workspace = None
     embeddings_model: SentenceTransformer = None
-
     action_embeddings: List = []
     actions: List = [str]
-
     next_checkpoint: int = None
-
     model_save_dir: str = "./"
+    self_response_checker: SelfResponseChecker = None
+    self_check_response: bool = True
+
+    context: str = "context"  #: :meta private:
+    output_key: str = "answer"  #: :meta private:
+    prompt: PromptTemplate = PROMPT
 
     class Type(Enum):
         """
@@ -72,12 +74,16 @@ class PersonalizerChain(Chain):
 
     def __init__(
         self,
+        llm: BaseLanguageModel,
         vw_workspace_type: Type,
-        embeddings_model: SentenceTransformer = SentenceTransformer("bert-base-nli-mean-tokens"),
+        embeddings_model: SentenceTransformer = SentenceTransformer(
+            "bert-base-nli-mean-tokens"
+        ),
         model_loading=True,
         large_action_spaces=False,
         vw_cmd=[],
         actions: List[str] = [],
+        self_check_response=True,
         *args,
         **kwargs,
     ):
@@ -106,7 +112,7 @@ class PersonalizerChain(Chain):
             next_checkpoint = highest_checkpoint + 1
 
         self.next_checkpoint = next_checkpoint
-        print(f"next checkpoint = {self.next_checkpoint}")
+        logger.info(f"next checkpoint = {self.next_checkpoint}")
 
         las_cmd = []
         if large_action_spaces and not vw_cmd:
@@ -117,9 +123,13 @@ class PersonalizerChain(Chain):
                 vw_cmd = las_cmd + [
                     "--cb_explore_adf",
                     "--quiet",
-                    "--interactions=AC",
+                    "--interactions=::",
                     "--coin",
-                    "--squarecb",
+                    "--squarecb"
+                    # "--epsilon=0.2",
+                    # "--power_t=0",
+                    # "--learning_rate=0.001",
+                    # "--cb_type=mtr"
                 ]
         elif vw_workspace_type == PersonalizerChain.Type.CONDITIONAL_CONTEXTUAL_BANDITS:
             if not vw_cmd:
@@ -133,9 +143,7 @@ class PersonalizerChain(Chain):
         else:
             raise ValueError("No other vw types supported yet")
 
-        self.embeddings_model = embeddings_model
-
-        print(f"vw command: {vw_cmd}")
+        logger.info(f"vw command: {vw_cmd}")
         # initialize things
         if actions:
             self.set_actions(actions)
@@ -144,10 +152,11 @@ class PersonalizerChain(Chain):
         else:
             self.workspace = vw.Workspace(vw_cmd)
 
-    context: str = "context"  #: :meta private:
+        self.embeddings_model = embeddings_model
 
-    output_key: str = "answer"  #: :meta private:
-    prompt: PromptTemplate = PROMPT
+        self.self_check_response = self_check_response
+        if self.self_check_response:
+            self.self_response_checker = SelfResponseChecker(llm=llm)
 
     class Config:
         """Configuration for this pydantic object."""
@@ -194,7 +203,7 @@ class PersonalizerChain(Chain):
         self.actions = actions
         action_feat_ind_orig = len(self.embeddings_model.encode(""))
         action_feat_ind = action_feat_ind_orig
-        for d in actions:
+        for d in self.actions:
             action_str = d
             action_embed = ""
             for emb in self.embeddings_model.encode(action_str):
@@ -210,8 +219,6 @@ class PersonalizerChain(Chain):
         run_manager: Optional[CallbackManagerForChainRun] = None,
     ) -> Dict[str, str]:
         _run_manager = run_manager or CallbackManagerForChainRun.get_noop_manager()
-
-        # print(f"THE PREDS I GOT: {preds}")
 
         t = self.llm_chain.predict(
             actions=[preds],
@@ -243,7 +250,9 @@ class PersonalizerChain(Chain):
             Be cautious when deleting or renaming checkpoint files manually, as this could cause the function to reuse checkpoint numbers.
         """
         serialized_workspace = self.workspace.serialize()
-        print(f"storing in: {self.model_save_dir}/model-{self.next_checkpoint}.vw")
+        logger.info(
+            f"storing in: {self.model_save_dir}/model-{self.next_checkpoint}.vw"
+        )
         with open(f"{self.model_save_dir}/model-{self.next_checkpoint}.vw", "wb") as f:
             f.write(serialized_workspace)
 
@@ -263,7 +272,9 @@ class PersonalizerChain(Chain):
         if "vw_workspace_type" not in kwargs:
             raise ValueError("vw_workspace_type must be specified")
         if kwargs.get("vw_workspace_type") is PersonalizerChain.Type.CONTEXTUAL_BANDITS:
-            return ContextualBanditPersonalizerChain(llm_chain=llm_chain, **kwargs)
+            return ContextualBanditPersonalizerChain(
+                llm_chain=llm_chain, llm=llm, **kwargs
+            )
         elif (
             kwargs.get("vw_workspace_type")
             is PersonalizerChain.Type.CONDITIONAL_CONTEXTUAL_BANDITS
@@ -327,68 +338,44 @@ class ContextualBanditPersonalizerChain(PersonalizerChain):
 
         predicted_action_str = self.actions[sampled_action]
 
-        return super()._call(run_manager=run_manager, inputs=inputs, preds=predicted_action_str)
-
-    def good_recommendation(self):
-        """
-        Learn will be called with a cost of -1 (cost range if good/neutural/bad are used is [-1, 1])
-
-        Note:
-            Care is needed if mixed with calling learn_with_specific_cost
-        """
-        text_parser = vw.TextFormatParser(self.workspace)
-
-        # reward means the smallest cost
-        cb_label = (self.latest_action, -1, self.latest_prob)
-        vw_ex = self.to_vw_example_format(
-            self.latest_context_emb, self.action_embeddings, cb_label
+        llm_resp = super()._call(
+            run_manager=run_manager, inputs=inputs, preds=predicted_action_str
         )
-        multi_ex = parse_lines(text_parser, vw_ex)
-        self.workspace.learn_one(multi_ex)
 
-    def neutral_recommendation(self):
-        """
-        Learn will be called with a cost of 0 (cost range if good/neutural/bad are used is [-1, 1])
+        if self.self_check_response:
+            try:
+                cost = -1.0 * self.self_response_checker.grade_response(
+                    inputs={"context": context}, llm_response=llm_resp[self.output_key]
+                )
 
-        Note:
-            Care is needed if mixed with calling learn_with_specific_cost
-        """
-        text_parser = vw.TextFormatParser(self.workspace)
+                text_parser = vw.TextFormatParser(self.workspace)
 
-        # punish means the intermediate cost
-        cb_label = (self.latest_action, 0, self.latest_prob)
+                cb_label = (self.latest_action, cost, self.latest_prob)
 
-        vw_ex = self.to_vw_example_format(
-            self.latest_context_emb, self.action_embeddings, cb_label
-        )
-        multi_ex = parse_lines(text_parser, vw_ex)
-        self.workspace.learn_one(multi_ex)
+                vw_ex = self.to_vw_example_format(
+                    self.latest_context_emb, self.action_embeddings, cb_label
+                )
+                multi_ex = parse_lines(text_parser, vw_ex)
+                self.workspace.learn_one(multi_ex)
 
-    def bad_recommendation(self):
-        """
-        Learn will be called with a cost of 1 (cost range if good/neutural/bad are used is [-1, 1])
+            except Exception as e:
+                print(f"this is the error: {e}")
+                logger.info(
+                    "The LLM was not able to rank and the chain was not able to adjust to this response"
+                )
 
-        Note:
-            Care is needed if mixed with calling learn_with_specific_cost
-        """
-        text_parser = vw.TextFormatParser(self.workspace)
+        return llm_resp
 
-        # punish means the biggest cost
-        cb_label = (self.latest_action, 1, self.latest_prob)
-
-        vw_ex = self.to_vw_example_format(
-            self.latest_context_emb, self.action_embeddings, cb_label
-        )
-        multi_ex = parse_lines(text_parser, vw_ex)
-        self.workspace.learn_one(multi_ex)
-
-    def learn_with_specific_cost(self, cost: int):
+    def learn_with_specific_cost(self, cost: int, force_cost=False):
         """
         Learn will be called with the cost specified
-
-        Note:
-            Care is needed if mixed with calling good/bad/neutural_reccommendation methods
+        Will raise an error if self_check_response is set to True and force_cost=True was not provided during the method call
+        force_cost should be used if the self_check_response failed to check the response correctly
         """
+        if self.self_check_response and not force_cost:
+            raise RuntimeError(
+                "self_check_response is set to True, this must be turned off for explicit feedback and training to be provided, or overriden by calling the method with force_cost=True"
+            )
         text_parser = vw.TextFormatParser(self.workspace)
 
         cb_label = (self.latest_action, cost, self.latest_prob)
@@ -398,8 +385,3 @@ class ContextualBanditPersonalizerChain(PersonalizerChain):
         )
         multi_ex = parse_lines(text_parser, vw_ex)
         self.workspace.learn_one(multi_ex)
-
-
-# ### TODO:
-# - simple joining
-# - add a callback for them to define the features they want
