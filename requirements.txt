@@ -1,0 +1,4 @@
+vowpal-wabbit-next
+langchain
+openai
+sentence_transformers

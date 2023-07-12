@@ -4,12 +4,13 @@ from __future__ import annotations
 import logging
 import glob
 import re
+import os
 from typing import Any, Dict, List, Optional
 
 from sentence_transformers import SentenceTransformer
 import vowpal_wabbit_next as vw
-from .personalizer_prompt import PROMPT
-from .response_checker import SelfResponseChecker
+from personalizer_prompt import PROMPT
+from response_checker import SelfResponseChecker
 from langchain.prompts.prompt import PromptTemplate
 
 from pydantic import Extra
@@ -22,6 +23,12 @@ from langchain.chains.llm import LLMChain
 from enum import Enum
 
 logger = logging.getLogger(__name__)
+logger.setLevel(logging.INFO)
+ch = logging.StreamHandler()
+formatter = logging.Formatter('%(asctime)s - %(name)s - %(levelname)s - %(message)s')
+ch.setFormatter(formatter)
+ch.setLevel(logging.INFO)
+logger.addHandler(ch)
 
 
 def parse_lines(parser: vw.TextFormatParser, input_str: str) -> List[vw.Example]:
@@ -40,6 +47,7 @@ class PersonalizerChain(Chain):
         large_action_spaces (bool, optional): If set to True and vw_cmd has not been specified in the constructor, it will enable large action spaces
         vw_cmd (List[str], optional): Advanced users can set the VW command line to whatever they want, as long as it is compatible with the Type that is specified (Type Enum)
         model_save_dir (str, optional): The directory to save the VW model to. Defaults to the current directory.
+        check_response (bool, optional): If set to True, the chain will check the response using the provided response_checker and the VW model will be updated with the result. Defaults to True.
 
     Notes:
         The class creates a VW model instance using the provided arguments. Before the chain object is destroyed the save_progress() function can be called. If it is called, the learned VW model is saved to a file in the current directory named `model-<checkpoint>.vw`. Checkpoints start at 1 and increment monotonically.
@@ -53,8 +61,8 @@ class PersonalizerChain(Chain):
     actions: List = [str]
     next_checkpoint: int = None
     model_save_dir: str = "./"
-    self_response_checker: SelfResponseChecker = None
-    self_check_response: bool = True
+    response_checker: SelfResponseChecker = None
+    check_response: bool = True
 
     context: str = "context"  #: :meta private:
     output_key: str = "answer"  #: :meta private:
@@ -83,7 +91,8 @@ class PersonalizerChain(Chain):
         large_action_spaces=False,
         vw_cmd=[],
         actions: List[str] = [],
-        self_check_response=True,
+        check_response=True,
+        model_save_dir="./",
         *args,
         **kwargs,
     ):
@@ -91,6 +100,9 @@ class PersonalizerChain(Chain):
 
         next_checkpoint = 1
         serialized_workspace = None
+
+        self.model_save_dir = model_save_dir
+        os.makedirs(self.model_save_dir, exist_ok=True)
 
         if model_loading:
             vwfile = None
@@ -112,7 +124,7 @@ class PersonalizerChain(Chain):
             next_checkpoint = highest_checkpoint + 1
 
         self.next_checkpoint = next_checkpoint
-        logger.info(f"next checkpoint = {self.next_checkpoint}")
+        logger.info(f"next model checkpoint = {self.next_checkpoint}")
 
         las_cmd = []
         if large_action_spaces and not vw_cmd:
@@ -125,12 +137,18 @@ class PersonalizerChain(Chain):
                     "--quiet",
                     "--interactions=::",
                     "--coin",
-                    "--squarecb"
+                    "--squarecb",
+                    # "--graph_feedback",
                     # "--epsilon=0.2",
                     # "--power_t=0",
                     # "--learning_rate=0.001",
                     # "--cb_type=mtr"
                 ]
+            else:
+                if "--cb_explore_adf" not in vw_cmd:
+                    raise ValueError(
+                        "If vw_cmd is specified, it must include --cb_explore_adf"
+                    )
         elif vw_workspace_type == PersonalizerChain.Type.CONDITIONAL_CONTEXTUAL_BANDITS:
             if not vw_cmd:
                 vw_cmd = las_cmd + [
@@ -154,9 +172,9 @@ class PersonalizerChain(Chain):
 
         self.embeddings_model = embeddings_model
 
-        self.self_check_response = self_check_response
-        if self.self_check_response:
-            self.self_response_checker = SelfResponseChecker(llm=llm)
+        self.check_response = check_response
+        if self.check_response:
+            self.response_checker = SelfResponseChecker(llm=llm)
 
     class Config:
         """Configuration for this pydantic object."""
@@ -342,9 +360,9 @@ class ContextualBanditPersonalizerChain(PersonalizerChain):
             run_manager=run_manager, inputs=inputs, preds=predicted_action_str
         )
 
-        if self.self_check_response:
+        if self.check_response:
             try:
-                cost = -1.0 * self.self_response_checker.grade_response(
+                cost = -1.0 * self.response_checker.grade_response(
                     inputs={"context": context}, llm_response=llm_resp[self.output_key]
                 )
 
@@ -369,12 +387,12 @@ class ContextualBanditPersonalizerChain(PersonalizerChain):
     def learn_with_specific_cost(self, cost: int, force_cost=False):
         """
         Learn will be called with the cost specified
-        Will raise an error if self_check_response is set to True and force_cost=True was not provided during the method call
-        force_cost should be used if the self_check_response failed to check the response correctly
+        Will raise an error if check_response is set to True and force_cost=True was not provided during the method call
+        force_cost should be used if the check_response failed to check the response correctly
         """
-        if self.self_check_response and not force_cost:
+        if self.check_response and not force_cost:
             raise RuntimeError(
-                "self_check_response is set to True, this must be turned off for explicit feedback and training to be provided, or overriden by calling the method with force_cost=True"
+                "check_response is set to True, this must be turned off for explicit feedback and training to be provided, or overriden by calling the method with force_cost=True"
             )
         text_parser = vw.TextFormatParser(self.workspace)
 
@@ -385,3 +403,15 @@ class ContextualBanditPersonalizerChain(PersonalizerChain):
         )
         multi_ex = parse_lines(text_parser, vw_ex)
         self.workspace.learn_one(multi_ex)
+
+
+# ### TODO:
+# - simple joining
+# - add a callback for them to define the features they want
+# - persist data to log file?
+# - proper installation
+
+# - add prompt option for self checker
+# - try abstracting it away with other custom checker
+# - set different LLM for checker and for chain
+# - provide a convenient way for user to provide new implementation of self_checker

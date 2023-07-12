@@ -1,6 +1,3 @@
-# flake8: noqa
-from __future__ import annotations
-
 from langchain.prompts.prompt import PromptTemplate
 
 _PROMPT_TEMPLATE = """You are given a set of action(s), here are their description(s): {actions}.

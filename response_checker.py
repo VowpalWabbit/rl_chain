@@ -11,7 +11,7 @@ from langchain.prompts import (
 
 class ResponseChecker(ABC):
     @abstractmethod
-    def grade_response(self, inputs: Dict[str, Any], llm_response: str) -> float:
+    def grade_response(self, inputs: Dict[str, Any], llm_response: str, **kwargs) -> float:
         pass
 
 
@@ -38,7 +38,7 @@ class SelfResponseChecker(ResponseChecker):
 
         self.llm_chain = LLMChain(llm=llm, prompt=self.prompt)
 
-    def grade_response(self, inputs: Dict[str, Any], llm_response: str) -> float:
+    def grade_response(self, inputs: Dict[str, Any], llm_response: str, **kwargs) -> float:
         ranking = self.llm_chain.predict(inputs=inputs, response=llm_response)
         ranking = ranking.strip()
         try:
