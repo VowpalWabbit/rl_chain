@@ -86,10 +86,7 @@ class ContextualBanditTextEmbedder(Embedder):
             - If actions are provided as a list of strings (e.g. actions = ["action1", "action2", "action3"]), each action will be assigned to the Vowpal Wabbit namespace, labelled `Actions`.
             - If actions are provided as a list of dictionaries, each action should be a dictionary where the keys are namespace names and the values are the corresponding action strings (e.g. actions = [{"namespace1": "action1", "namespace2": "action2"}, {"namespace1": "action3", "namespace2": "action4"}])
         """
-        if actions and isinstance(actions[0], str):
-            return embed(actions, self.model, "Actions")
-        else:
-            return embed(actions, self.model)
+        return embed(actions, self.model, "Actions")
 
     def embed_context(self, context: Any):
         """
@@ -100,12 +97,7 @@ class ContextualBanditTextEmbedder(Embedder):
             - If context is provided as a string (e.g. "context"), the context will be assigned to the Vowpal Wabbit namespace, labelled `Context`.
             - If context is provided as a dictionary, then it should be a single dictionary where the keys are namespace names and the values are the corresponding strings of the context (e.g. {"namespace1": "part of context", "namespace2": "another part of the context"})
         """
-        if isinstance(context, str):
-            return embed(context, self.model, "Context")[0]
-        elif isinstance(context, dict):
-            return embed(context, self.model)[0]
-        else:
-            raise ValueError("Context must be a string or a dictionary")
+        return embed(context, self.model, "Context")[0]
 
     def to_vw_format(self, **kwargs):
         """
