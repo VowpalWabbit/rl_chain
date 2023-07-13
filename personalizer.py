@@ -5,15 +5,15 @@ import logging
 import glob
 import re
 import os
-from typing import Any, Dict, List, Optional
+from typing import Any, Dict, List, Optional, Tuple
 
 from sentence_transformers import SentenceTransformer
 import vowpal_wabbit_next as vw
 from personalizer_prompt import PROMPT
-from response_checker import SelfResponseChecker
+from response_checker import ResponseChecker, LLMResponseChecker
 from langchain.prompts.prompt import PromptTemplate
 
-from pydantic import Extra
+from pydantic import Extra, PrivateAttr
 import numpy as np
 
 from langchain.base_language import BaseLanguageModel
@@ -43,7 +43,6 @@ class PersonalizerChain(Chain):
         vw_workspace_type (Type): The type of personalization algorithm to be used by the VW model.
         embeddings_model (SentenceTransformer, optional): The type of embeddings to be used for feature representation. Defaults to BERT.
         model_loading (bool, optional): If set to True, the chain will attempt to load an existing VW model from the latest checkpoint file in the {model_save_dir} directory (current directory if none specified). If set to False, it will start training from scratch, potentially overwriting existing files. Defaults to True.
-        actions (List[str], optional): A list of action strings for VW to choose from.
         large_action_spaces (bool, optional): If set to True and vw_cmd has not been specified in the constructor, it will enable large action spaces
         vw_cmd (List[str], optional): Advanced users can set the VW command line to whatever they want, as long as it is compatible with the Type that is specified (Type Enum)
         model_save_dir (str, optional): The directory to save the VW model to. Defaults to the current directory.
@@ -55,16 +54,18 @@ class PersonalizerChain(Chain):
     """
 
     llm_chain: LLMChain
-    workspace: vw.Workspace = None
-    embeddings_model: SentenceTransformer = None
-    next_checkpoint: int = None
+    workspace: Optional[vw.Workspace] = None
+    embeddings_model: SentenceTransformer = SentenceTransformer(
+        "bert-base-nli-mean-tokens"
+    )
+    next_checkpoint: int = 1
     model_save_dir: str = "./"
-    response_checker: SelfResponseChecker = None
+    response_checker: Optional[ResponseChecker]
     check_response: bool = True
 
     context: str = "context"  #: :meta private:
-    output_key: str = "answer"  #: :meta private:
-    prompt: PromptTemplate = PROMPT
+    output_key: str = "result"  #: :meta private:
+    prompt: Optional[PromptTemplate]
 
     class Type(Enum):
         """
@@ -84,14 +85,9 @@ class PersonalizerChain(Chain):
         self,
         llm: BaseLanguageModel,
         vw_workspace_type: Type,
-        embeddings_model: SentenceTransformer = SentenceTransformer(
-            "bert-base-nli-mean-tokens"
-        ),
         model_loading=True,
         large_action_spaces=False,
         vw_cmd=[],
-        check_response=True,
-        model_save_dir="./",
         *args,
         **kwargs,
     ):
@@ -100,7 +96,6 @@ class PersonalizerChain(Chain):
         next_checkpoint = 1
         serialized_workspace = None
 
-        self.model_save_dir = model_save_dir
         os.makedirs(self.model_save_dir, exist_ok=True)
 
         if model_loading:
@@ -137,11 +132,6 @@ class PersonalizerChain(Chain):
                     "--interactions=::",
                     "--coin",
                     "--squarecb",
-                    # "--graph_feedback",
-                    # "--epsilon=0.2",
-                    # "--power_t=0",
-                    # "--learning_rate=0.001",
-                    # "--cb_type=mtr"
                 ]
             else:
                 if "--cb_explore_adf" not in vw_cmd:
@@ -149,14 +139,7 @@ class PersonalizerChain(Chain):
                         "If vw_cmd is specified, it must include --cb_explore_adf"
                     )
         elif vw_workspace_type == PersonalizerChain.Type.CONDITIONAL_CONTEXTUAL_BANDITS:
-            if not vw_cmd:
-                vw_cmd = las_cmd + [
-                    "--ccb_explore_adf",
-                    "--quiet",
-                    "--interactions=AC",
-                    "--coin",
-                    "--squarecb",
-                ]
+            raise ValueError("Coming soon, not currently supported")
         elif vw_workspace_type == PersonalizerChain.Type.SLATES:
             if not vw_cmd:
                 vw_cmd = las_cmd + [
@@ -176,11 +159,12 @@ class PersonalizerChain(Chain):
         else:
             self.workspace = vw.Workspace(vw_cmd)
 
-        self.embeddings_model = embeddings_model
-
-        self.check_response = check_response
         if self.check_response:
-            self.response_checker = SelfResponseChecker(llm=llm)
+            self.response_checker = (
+                self.response_checker
+                if self.response_checker
+                else LLMResponseChecker(llm=llm)
+            )
 
     class Config:
         """Configuration for this pydantic object."""
@@ -277,15 +261,31 @@ class PersonalizerChain(Chain):
 
 
 class ContextualBanditPersonalizerChain(PersonalizerChain):
-    latest_context_emb: Optional[str] = None
-    latest_prob: Optional[float] = None
-    latest_action: Optional[int] = None
+    class ResponseResult:
+        def __init__(
+            self,
+            action_embeddings: List[str],
+            chosen_action: int,
+            chosen_action_probability: float,
+            context_emb: str,
+            cost: Optional[float],
+        ):
+            self.action_embeddings = action_embeddings
+            self.chosen_action = chosen_action
+            self.chosen_action_probability = chosen_action_probability
+            self.context_emb = context_emb
+            self.cost = cost
+
+    latest_response: Optional[ResponseResult] = None
     action_embeddings: List[str] = []
     actions: List[str] = []
 
-    def __init__(self, actions: List[str] = None, *args, **kwargs):
+    def __init__(
+        self,
+        *args,
+        **kwargs,
+    ):
         super().__init__(*args, **kwargs)
-        self.set_actions(actions or [])
 
     def set_actions_and_embeddings(self, actions: List[str], action_embeddings: List):
         """
@@ -319,15 +319,15 @@ class ContextualBanditPersonalizerChain(PersonalizerChain):
             action_feat_ind = action_feat_ind_orig
             self.action_embeddings.append(action_embed)
 
-    def to_vw_example_format(self, context_embed, actions, cb_label=None) -> str:
+    def to_vw_example_format(self, context_embed, action_embs, cb_label=None) -> str:
         if cb_label is not None:
             chosen_action, cost, prob = cb_label
         example_string = ""
         example_string += f"shared |Context {context_embed}\n"
-        for i, action in enumerate(actions):
+        for i, action_embedding in enumerate(action_embs):
             if cb_label is not None and chosen_action == i:
                 example_string += "{}:{}:{} ".format(chosen_action, cost, prob)
-            example_string += "|Action {} \n".format(action)
+            example_string += "|Action {} \n".format(action_embedding)
         # Strip the last newline
         return example_string[:-1]
 
@@ -335,8 +335,13 @@ class ContextualBanditPersonalizerChain(PersonalizerChain):
         self,
         inputs: Dict[str, Any],
         run_manager: Optional[CallbackManagerForChainRun] = None,
-    ) -> Dict[str, str]:
+    ) -> Dict[str, Any]:
         _run_manager = run_manager or CallbackManagerForChainRun.get_noop_manager()
+
+        if self.actions == []:
+            raise ValueError("Actions must be set before calling the chain")
+        if self.workspace is None:
+            raise RuntimeError("Workspace must be set before calling the chain")
 
         context = inputs[self.context]
         text_parser = vw.TextFormatParser(self.workspace)
@@ -349,78 +354,96 @@ class ContextualBanditPersonalizerChain(PersonalizerChain):
         # Only supports single example per prompt
         vw_ex = self.to_vw_example_format(context_embed, self.action_embeddings)
         multi_ex = parse_lines(text_parser, vw_ex)
-        self.latest_context_emb = context_embed
-        preds = self.workspace.predict_one(multi_ex)
-
+        preds: List[Tuple[int, float]] = self.workspace.predict_one(multi_ex)
         prob_sum = sum(prob for _, prob in preds)
         probabilities = [prob / prob_sum for _, prob in preds]
 
         ## explore
         sampled_index = np.random.choice(len(preds), p=probabilities)
         sampled_ap = preds[sampled_index]
-
         sampled_action = sampled_ap[0]
-        self.latest_action = sampled_action
-        self.latest_prob = sampled_ap[1]
+        sampled_prob = sampled_ap[1]
 
         predicted_action_str = self.actions[sampled_action]
 
+        llm_resp: Dict[str, Any] = {}
         llm_resp = super()._call(
             run_manager=run_manager, inputs=inputs, preds=predicted_action_str
         )
+        latest_cost = None
 
-        if self.check_response:
+        if self.check_response and self.response_checker:
             try:
                 cost = -1.0 * self.response_checker.grade_response(
-                    inputs={"context": context}, llm_response=llm_resp[self.output_key]
+                    inputs=inputs,
+                    llm_response=llm_resp[self.output_key],
+                    chosen_action=predicted_action_str,
                 )
+
+                latest_cost = cost
 
                 text_parser = vw.TextFormatParser(self.workspace)
 
-                cb_label = (self.latest_action, cost, self.latest_prob)
+                cb_label = (sampled_action, cost, sampled_prob)
 
                 vw_ex = self.to_vw_example_format(
-                    self.latest_context_emb, self.action_embeddings, cb_label
+                    context_embed, self.action_embeddings, cb_label
                 )
                 multi_ex = parse_lines(text_parser, vw_ex)
                 self.workspace.learn_one(multi_ex)
 
             except Exception as e:
-                print(f"this is the error: {e}")
                 logger.info(
-                    "The LLM was not able to rank and the chain was not able to adjust to this response"
+                    f"The LLM was not able to rank and the chain was not able to adjust to this response. Error: {e}"
                 )
+
+        self.latest_response = ContextualBanditPersonalizerChain.ResponseResult(
+            chosen_action=sampled_action,
+            chosen_action_probability=sampled_prob,
+            context_emb=context_embed,
+            action_embeddings=self.action_embeddings,
+            cost=latest_cost,
+        )
+
+        llm_resp[self.output_key] = {
+            "response": llm_resp[self.output_key],
+            "response_result": self.latest_response,
+        }
 
         return llm_resp
 
-    def learn_with_specific_cost(self, cost: int, force_cost=False):
+    def learn_delayed_reward(
+        self, reward: float, response_result: ResponseResult, force_reward=False
+    ):
         """
-        Learn will be called with the cost specified
-        Will raise an error if check_response is set to True and force_cost=True was not provided during the method call
+        Learn will be called with the cost specified and the actions/embeddings/etc stored in response_result
+
+        Will raise an error if check_response is set to True and force_reward=True was not provided during the method call
         force_cost should be used if the check_response failed to check the response correctly
         """
-        if self.check_response and not force_cost:
+        if self.check_response and not force_reward:
             raise RuntimeError(
-                "check_response is set to True, this must be turned off for explicit feedback and training to be provided, or overriden by calling the method with force_cost=True"
+                "check_response is set to True, this must be turned off for explicit feedback and training to be provided, or overriden by calling the method with force_reward=True"
             )
         text_parser = vw.TextFormatParser(self.workspace)
 
-        cb_label = (self.latest_action, cost, self.latest_prob)
+        cost = -1.0 * reward
+
+        cb_label = (
+            response_result.chosen_action,
+            cost,
+            response_result.chosen_action_probability,
+        )
 
         vw_ex = self.to_vw_example_format(
-            self.latest_context_emb, self.action_embeddings, cb_label
+            response_result.context_emb, response_result.action_embeddings, cb_label
         )
         multi_ex = parse_lines(text_parser, vw_ex)
         self.workspace.learn_one(multi_ex)
 
 
 # ### TODO:
-# - simple joining
 # - add a callback for them to define the features they want
 # - persist data to log file?
-# - proper installation
-
-# - add prompt option for self checker
-# - try abstracting it away with other custom checker
-# - set different LLM for checker and for chain
-# - provide a convenient way for user to provide new implementation of self_checker
+# - would this work with a longer chain?
+# - make more namespaces available to the user

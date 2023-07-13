@@ -10,12 +10,16 @@ from langchain.prompts import (
 
 
 class ResponseChecker(ABC):
+    """Abstract method to grade the chosen action or the response of the llm"""
+
     @abstractmethod
-    def grade_response(self, inputs: Dict[str, Any], llm_response: str, **kwargs) -> float:
+    def grade_response(
+        self, inputs: Dict[str, Any], llm_response: str, chosen_action: str
+    ) -> float:
         pass
 
 
-class SelfResponseChecker(ResponseChecker):
+class LLMResponseChecker(ResponseChecker):
     llm_chain: LLMChain
     prompt: PromptTemplate
 
@@ -26,7 +30,7 @@ class SelfResponseChecker(ResponseChecker):
             template = "PLEASE RESPOND ONLY WITH A SIGNLE FLOAT AND NO OTHER TEXT EXPLANATION\n You are a VERY VERY strict judge that is called on to rank a response based on given criteria.\
                 You must respond with your ranking by providing a single float within the range [-1, 1], -1 being very bad response and 1 being very good response."
             system_message_prompt = SystemMessagePromptTemplate.from_template(template)
-            human_template = "Given this context {inputs} as the most important attribute, rank how good or bad this text response is: {response}."
+            human_template = "Given this context {context} as the most important attribute, rank how good or bad this text selection is: {action}."
             human_message_prompt = HumanMessagePromptTemplate.from_template(
                 human_template
             )
@@ -38,8 +42,10 @@ class SelfResponseChecker(ResponseChecker):
 
         self.llm_chain = LLMChain(llm=llm, prompt=self.prompt)
 
-    def grade_response(self, inputs: Dict[str, Any], llm_response: str, **kwargs) -> float:
-        ranking = self.llm_chain.predict(inputs=inputs, response=llm_response)
+    def grade_response(
+        self, inputs: Dict[str, Any], llm_response: str, chosen_action: str
+    ) -> float:
+        ranking = self.llm_chain.predict(**inputs, action=chosen_action)
         ranking = ranking.strip()
         try:
             resp = float(ranking)
