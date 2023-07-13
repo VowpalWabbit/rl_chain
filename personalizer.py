@@ -9,7 +9,7 @@ from typing import Any, Dict, List, Optional, Tuple
 
 import vowpal_wabbit_next as vw
 from personalizer_prompt import PROMPT
-from response_checker import ResponseChecker, LLMResponseChecker
+from response_checker import ResponseChecker, LLMResponseCheckerForCB
 from vw_example_builder import ContextualBanditTextEmbedder, Embedder
 from langchain.prompts.prompt import PromptTemplate
 
@@ -270,9 +270,9 @@ class ContextualBanditPersonalizerChain(PersonalizerChain):
 
     Attributes:
         text_embedder: (ContextualBanditTextEmbedder, optional) The text embedder to use for embedding the context and the actions. If not provided, a default embedder is used.
-        actions: (List, required) The list of actions to choose from. Can be either a List of str's or a List of Dict's. Actions will be embedded by the text embedder.
-            - If actions are provided as a list of strings, each action will be assigned the VW namespace `Actions`.
-            - If actions are provided as a list of dictionaries, each action is expected to be a dictionary of namespaces and action strings.
+        actions: (List, required) The list of actions for the Vowpal Wabbit model to choose from. This list can either be a List of str's or a List of Dict's.
+                - Actions provided as a list of strings e.g. actions = ["action1", "action2", "action3"]
+                - If actions are provided as a list of dictionaries, each action should be a dictionary where the keys are namespace names and the values are the corresponding action strings e.g. actions = [{"namespace1": "action1", "namespace2": "action2"}, {"namespace1": "action3", "namespace2": "action4"}]
     """
     class ResponseResult:
         def __init__(
@@ -417,11 +417,10 @@ class ContextualBanditPersonalizerChain(PersonalizerChain):
         self.workspace.learn_one(multi_ex)
 
 # ### TODO:
-# - add a callback for them to define the features they want
 # - persist data to log file?
 # - would this work with a longer chain?
 # - make more namespaces available to the user
 # - fix save_progress to not override existing file
-# - Naming: is LLMResponseChecker a good enough name?, Personalizer? CB how should they be named for a good API?
+# - Naming: is LLMResponseCheckerForCB a good enough name?, Personalizer? CB how should they be named for a good API?
 # - Good documentation: check langchain requirements we are adding explanations on the functions as we go
 # - be able to specify vw model file name
