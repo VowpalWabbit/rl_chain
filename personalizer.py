@@ -419,8 +419,7 @@ class ContextualBanditPersonalizerChain(PersonalizerChain):
 # ### TODO:
 # - persist data to log file?
 # - would this work with a longer chain?
-# - make more namespaces available to the user
 # - fix save_progress to not override existing file
-# - Naming: is LLMResponseCheckerForCB a good enough name?, Personalizer? CB how should they be named for a good API?
+# - Naming: is LLMResponseChecker a good enough name?, Personalizer? CB how should they be named for a good API?
 # - Good documentation: check langchain requirements we are adding explanations on the functions as we go
 # - be able to specify vw model file name
