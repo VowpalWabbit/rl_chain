@@ -1,7 +1,38 @@
 from abc import ABC, abstractmethod
-from typing import Any, Dict, List, Optional
+from typing import Any, Dict, List, Optional, Union
 from sentence_transformers import SentenceTransformer
 
+
+def embed(to_embed:Union[str, Dict, List[str], List[Dict]], model:Any, default_namespace: Optional[str] = None) -> List[Dict[str, str]]:
+    """
+    Embeds the actions or context using the SentenceTransformer model
+
+    Attributes:
+        to_embed: (Union[str, List[str], List[Dict]], required) The text to be embedded, either a string, a list of strings or a list of dictionaries.
+        - if to_embed provided as a string, it will be embedded as a single string with the default namespace as dictionary key
+        - if to_embed provided as a dictionary, it will be embedded as a single string
+        - if to_embed provided as a list of strings, each string will be embedded as a single string with the default namespace as dictionary keys
+        - if to_embed provided as a list of dictionaries, each dictionary will be embedded as a single string
+        default_namespace: (str, required) The default namespace to use when embedding the to_embed string
+        model: (Any, required) The model to use for embedding
+    Returns:
+        List[Dict[str, str]]: A list of dictionaries where each dictionary has the namespace as the key and the embedded string as the value
+    """
+    if isinstance(to_embed, str):
+        if default_namespace is None:
+            raise ValueError("The default namespace must be provided when embedding a string")
+        return [{default_namespace: " ".join(map(str, model.encode(to_embed)))}]
+    elif isinstance(to_embed, dict):
+        return [{ns: " ".join(map(str, model.encode(embed_str))) for ns, embed_str in to_embed.items()}]
+    elif isinstance(to_embed, list):
+        if isinstance(to_embed[0], str):
+            if default_namespace is None:
+                raise ValueError("The default namespace must be provided when embedding a list of strings")  
+            return [{default_namespace: " ".join(map(str, model.encode(embed_item)))} for embed_item in to_embed]
+        else:
+            return [{ns: " ".join(map(str, model.encode(embed_str))) for ns, embed_str in embed_item.items()} for embed_item in to_embed]
+    else:
+        raise ValueError("Invalid input format for embedding")
 
 class Embedder(ABC):
     @abstractmethod
@@ -32,19 +63,9 @@ class ContextualBanditTextEmbedder(Embedder):
             - If actions are provided as a list of dictionaries, each action should be a dictionary where the keys are namespace names and the values are the corresponding action strings (e.g. actions = [{"namespace1": "action1", "namespace2": "action2"}, {"namespace1": "action3", "namespace2": "action4"}])
         """
         if actions and isinstance(actions[0], str):
-            self.actions: List[Dict[str, str]] = []
-            for action in actions:
-                self.actions.append({"Action": action})
+            self.action_embeddings = embed(actions, self.model, 'Actions')
         else:
-            self.actions = actions
-
-        self.action_embeddings: List[Dict[str, str]] = []
-        for action in self.actions:
-            action_dict = {}
-            for ns, action_str in action.items():
-                action_embed = " ".join(map(str, self.model.encode(action_str)))
-                action_dict[ns] = action_embed
-            self.action_embeddings.append(action_dict)
+            self.action_embeddings = embed(actions, self.model)
 
     def embed_context(self, context: Any):
         """
@@ -56,15 +77,11 @@ class ContextualBanditTextEmbedder(Embedder):
             - If context is provided as a dictionary, then it should be a single dictionary where the keys are namespace names and the values are the corresponding strings of the context (e.g. {"namespace1": "part of context", "namespace2": "another part of the context"})
         """
         if isinstance(context, str):
-            self.context = {"Context": context}
+            self.context_embedding = embed(context, self.model, 'Context')[0]
         elif isinstance(context, dict):
-            self.context = context
+            self.context_embedding = embed(context, self.model)[0]
         else:
             raise ValueError("Context must be a string or a dictionary")
-
-        self.context_embedding: Dict[str, str] = {}
-        for ns, context_str in self.context.items():
-            self.context_embedding[ns] = " ".join(map(str, self.model.encode(context_str)))
 
     def get_context_embedding(self) -> Dict[str, str]:
         return self.context_embedding
