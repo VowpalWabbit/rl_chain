@@ -3,7 +3,11 @@ from typing import Any, Dict, List, Optional, Union
 from sentence_transformers import SentenceTransformer
 
 
-def embed(to_embed:Union[str, Dict, List[str], List[Dict]], model:Any, default_namespace: Optional[str] = None) -> List[Dict[str, str]]:
+def embed(
+    to_embed: Union[str, Dict, List[str], List[Dict]],
+    model: Any,
+    default_namespace: Optional[str] = None,
+) -> List[Dict[str, str]]:
     """
     Embeds the actions or context using the SentenceTransformer model
 
@@ -20,23 +24,42 @@ def embed(to_embed:Union[str, Dict, List[str], List[Dict]], model:Any, default_n
     """
     if isinstance(to_embed, str):
         if default_namespace is None:
-            raise ValueError("The default namespace must be provided when embedding a string")
+            raise ValueError(
+                "The default namespace must be provided when embedding a string"
+            )
         return [{default_namespace: " ".join(map(str, model.encode(to_embed)))}]
     elif isinstance(to_embed, dict):
-        return [{ns: " ".join(map(str, model.encode(embed_str))) for ns, embed_str in to_embed.items()}]
+        return [
+            {
+                ns: " ".join(map(str, model.encode(embed_str)))
+                for ns, embed_str in to_embed.items()
+            }
+        ]
     elif isinstance(to_embed, list):
         if isinstance(to_embed[0], str):
             if default_namespace is None:
-                raise ValueError("The default namespace must be provided when embedding a list of strings")  
-            return [{default_namespace: " ".join(map(str, model.encode(embed_item)))} for embed_item in to_embed]
+                raise ValueError(
+                    "The default namespace must be provided when embedding a list of strings"
+                )
+            return [
+                {default_namespace: " ".join(map(str, model.encode(embed_item)))}
+                for embed_item in to_embed
+            ]
         else:
-            return [{ns: " ".join(map(str, model.encode(embed_str))) for ns, embed_str in embed_item.items()} for embed_item in to_embed]
+            return [
+                {
+                    ns: " ".join(map(str, model.encode(embed_str)))
+                    for ns, embed_str in embed_item.items()
+                }
+                for embed_item in to_embed
+            ]
     else:
         raise ValueError("Invalid input format for embedding")
 
+
 class Embedder(ABC):
     @abstractmethod
-    def to_vw_format(self, **kwargs) -> str:
+    def to_vw_format(self, **kwargs):
         pass
 
 
@@ -47,6 +70,7 @@ class ContextualBanditTextEmbedder(Embedder):
     Attributes:
         embeddings_model name (SentenceTransformer, optional): The type of embeddings to be used for feature representation. Defaults to BERT.
     """
+
     def __init__(self, model_name: Optional[str] = None):
         if not model_name:
             self.model = None
@@ -63,9 +87,9 @@ class ContextualBanditTextEmbedder(Embedder):
             - If actions are provided as a list of dictionaries, each action should be a dictionary where the keys are namespace names and the values are the corresponding action strings (e.g. actions = [{"namespace1": "action1", "namespace2": "action2"}, {"namespace1": "action3", "namespace2": "action4"}])
         """
         if actions and isinstance(actions[0], str):
-            self.action_embeddings = embed(actions, self.model, 'Actions')
+            return embed(actions, self.model, "Actions")
         else:
-            self.action_embeddings = embed(actions, self.model)
+            return embed(actions, self.model)
 
     def embed_context(self, context: Any):
         """
@@ -77,19 +101,13 @@ class ContextualBanditTextEmbedder(Embedder):
             - If context is provided as a dictionary, then it should be a single dictionary where the keys are namespace names and the values are the corresponding strings of the context (e.g. {"namespace1": "part of context", "namespace2": "another part of the context"})
         """
         if isinstance(context, str):
-            self.context_embedding = embed(context, self.model, 'Context')[0]
+            return embed(context, self.model, "Context")[0]
         elif isinstance(context, dict):
-            self.context_embedding = embed(context, self.model)[0]
+            return embed(context, self.model)[0]
         else:
             raise ValueError("Context must be a string or a dictionary")
 
-    def get_context_embedding(self) -> Dict[str, str]:
-        return self.context_embedding
-    
-    def get_action_embeddings(self) -> List[Dict[str, str]]:
-        return self.action_embeddings
-
-    def to_vw_format(self, **kwargs) -> str:
+    def to_vw_format(self, **kwargs):
         """
         Converts the context and actions into a format that can be used by VW
 
@@ -102,9 +120,31 @@ class ContextualBanditTextEmbedder(Embedder):
 
         if "cb_label" in kwargs:
             chosen_action, cost, prob = kwargs["cb_label"]
-        
-        context_emb = self.context_embedding if "context" not in kwargs else kwargs["context"]
-        action_embs = self.action_embeddings if "actions" not in kwargs else kwargs["actions"]
+
+        context_emb = None
+        action_embs = None
+
+        if "action_strs" in kwargs and "action_embs" in kwargs:
+            raise ValueError("Only one of action_strs or action_embs can be provided")
+        if "context_str" in kwargs and "context_embs" in kwargs:
+            raise ValueError("Only one of context_str or context_embs can be provided")
+
+        if "action_strs" in kwargs:
+            action_embs = self.embed_actions(kwargs["action_strs"])
+        elif "action_embs" in kwargs:
+            action_embs = kwargs["action_embs"]
+        else:
+            raise ValueError(
+                "Actions must be provided either in plain text form or as embeddings"
+            )
+        if "context_str" in kwargs:
+            context_emb = self.embed_context(kwargs["context_str"])
+        elif "context_embs" in kwargs:
+            context_emb = kwargs["context_embs"]
+        else:
+            raise ValueError(
+                "Context must be provided either in plain text form or as embeddings"
+            )
 
         if not context_emb or not action_embs:
             raise ValueError("Context and actions must be embedded first")
@@ -114,7 +154,7 @@ class ContextualBanditTextEmbedder(Embedder):
         for ns, context in context_emb.items():
             example_string += f"|{ns} {context} "
         example_string += "\n"
-        
+
         for i, action in enumerate(action_embs):
             if "cb_label" in kwargs and chosen_action == i:
                 example_string += f"{chosen_action}:{cost}:{prob} "
@@ -122,4 +162,4 @@ class ContextualBanditTextEmbedder(Embedder):
                 example_string += f"|{ns} {action_embedding} "
             example_string += "\n"
         # Strip the last newline
-        return example_string[:-1]
+        return example_string[:-1], context_emb, action_embs
