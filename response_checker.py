@@ -14,7 +14,7 @@ class ResponseChecker(ABC):
 
     @abstractmethod
     def grade_response(
-        self, inputs: Dict[str, Any], llm_response: str, chosen_action: str
+        self, inputs: Dict[str, Any], llm_response: str, chosen_action: Any
     ) -> float:
         pass
 
@@ -43,7 +43,7 @@ class LLMResponseChecker(ResponseChecker):
         self.llm_chain = LLMChain(llm=llm, prompt=self.prompt)
 
     def grade_response(
-        self, inputs: Dict[str, Any], llm_response: str, chosen_action: str
+        self, inputs: Dict[str, Any], llm_response: str, chosen_action: Any
     ) -> float:
         ranking = self.llm_chain.predict(**inputs, action=chosen_action)
         ranking = ranking.strip()
