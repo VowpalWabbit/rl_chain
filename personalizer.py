@@ -46,7 +46,7 @@ class PersonalizerChain(Chain):
         large_action_spaces (bool, optional): If set to True and vw_cmd has not been specified in the constructor, it will enable large action spaces
         vw_cmd (List[str], optional): Advanced users can set the VW command line to whatever they want, as long as it is compatible with the Type that is specified (Type Enum)
         model_save_dir (str, optional): The directory to save the VW model to. Defaults to the current directory.
-        check_response (bool, optional): If set to True, the chain will check the response using the provided response_checker and the VW model will be updated with the result. Defaults to True.
+        response_checker (ResponseChecker, optional): If set, the chain will check the response using the provided response_checker and the VW model will be updated with the result. Defaults to None.
 
     Notes:
         The class creates a VW model instance using the provided arguments. Before the chain object is destroyed the save_progress() function can be called. If it is called, the learned VW model is saved to a file in the current directory named `model-<checkpoint>.vw`. Checkpoints start at 1 and increment monotonically.
@@ -60,8 +60,7 @@ class PersonalizerChain(Chain):
     )
     next_checkpoint: int = 1
     model_save_dir: str = "./"
-    response_checker: Optional[ResponseChecker]
-    check_response: bool = True
+    response_checker: Optional[ResponseChecker] = None
 
     context: str = "context"  #: :meta private:
     output_key: str = "result"  #: :meta private:
@@ -158,13 +157,6 @@ class PersonalizerChain(Chain):
             self.workspace = vw.Workspace(vw_cmd, model_data=serialized_workspace)
         else:
             self.workspace = vw.Workspace(vw_cmd)
-
-        if self.check_response:
-            self.response_checker = (
-                self.response_checker
-                if self.response_checker
-                else LLMResponseChecker(llm=llm)
-            )
 
     class Config:
         """Configuration for this pydantic object."""
@@ -280,12 +272,9 @@ class ContextualBanditPersonalizerChain(PersonalizerChain):
     action_embeddings: List[str] = []
     actions: List[str] = []
 
-    def __init__(
-        self,
-        *args,
-        **kwargs,
-    ):
+    def __init__(self, *args, **kwargs):
         super().__init__(*args, **kwargs)
+        self.set_actions(self.actions)
 
     def set_actions_and_embeddings(self, actions: List[str], action_embeddings: List):
         """
@@ -338,7 +327,7 @@ class ContextualBanditPersonalizerChain(PersonalizerChain):
     ) -> Dict[str, Any]:
         _run_manager = run_manager or CallbackManagerForChainRun.get_noop_manager()
 
-        if self.actions == []:
+        if not self.actions or not self.action_embeddings:
             raise ValueError("Actions must be set before calling the chain")
         if self.workspace is None:
             raise RuntimeError("Workspace must be set before calling the chain")
@@ -366,13 +355,12 @@ class ContextualBanditPersonalizerChain(PersonalizerChain):
 
         predicted_action_str = self.actions[sampled_action]
 
-        llm_resp: Dict[str, Any] = {}
-        llm_resp = super()._call(
+        llm_resp:Dict[str, Any] = super()._call(
             run_manager=run_manager, inputs=inputs, preds=predicted_action_str
         )
         latest_cost = None
 
-        if self.check_response and self.response_checker:
+        if self.response_checker:
             try:
                 cost = -1.0 * self.response_checker.grade_response(
                     inputs=inputs,
@@ -416,12 +404,12 @@ class ContextualBanditPersonalizerChain(PersonalizerChain):
         self, reward: float, response_result: ResponseResult, force_reward=False
     ):
         """
-        Learn will be called with the cost specified and the actions/embeddings/etc stored in response_result
+        Learn will be called with the reward specified and the actions/embeddings/etc stored in response_result
 
         Will raise an error if check_response is set to True and force_reward=True was not provided during the method call
         force_cost should be used if the check_response failed to check the response correctly
         """
-        if self.check_response and not force_reward:
+        if self.response_checker and not force_reward:
             raise RuntimeError(
                 "check_response is set to True, this must be turned off for explicit feedback and training to be provided, or overriden by calling the method with force_reward=True"
             )
