@@ -106,40 +106,25 @@ class ContextualBanditTextEmbedder(Embedder):
         Attributes:
             **kwargs: (Dict, optional) The keyword arguments that can be passed to the function. The following keyword arguments are supported:
                 - cb_label: (Tuple, optional) The tuple containing the chosen action, the cost of the chosen action, and the probability of the chosen action. This tuple is used to label the chosen action in the VW example string.        
-                - context: (Dict, optional) The context for the VW model to use when choosing an action. If not supplied then the internally stored context from the latest embed_context() call will be used.
-                - actions: (List, optional) The list of actions for the VW model to choose from. If not supplied then the internally stored actions from the latest embed_actions() call will be used.
+                - inputs: (Dict[str, Any], optional) dictionary containing:
+                    - context: (Dict, optional) The context for the VW model to use when choosing an action.
+                    - actions: (List, optional) The list of actions for the VW model to choose from.
+        
+        Returns:    
         """
 
         if "cb_label" in kwargs:
             chosen_action, cost, prob = kwargs["cb_label"]
+        
+        inputs = kwargs.get('inputs', {})
+        context = inputs.get('context')
+        actions = inputs.get('actions')
 
-        context_emb = None
-        action_embs = None
-
-        if "action_strs" in kwargs and "action_embs" in kwargs:
-            raise ValueError("Only one of action_strs or action_embs can be provided")
-        if "context_str" in kwargs and "context_embs" in kwargs:
-            raise ValueError("Only one of context_str or context_embs can be provided")
-
-        if "action_strs" in kwargs:
-            action_embs = self.embed_actions(kwargs["action_strs"])
-        elif "action_embs" in kwargs:
-            action_embs = kwargs["action_embs"]
-        else:
-            raise ValueError(
-                "Actions must be provided either in plain text form or as embeddings"
-            )
-        if "context_str" in kwargs:
-            context_emb = self.embed_context(kwargs["context_str"])
-        elif "context_embs" in kwargs:
-            context_emb = kwargs["context_embs"]
-        else:
-            raise ValueError(
-                "Context must be provided either in plain text form or as embeddings"
-            )
+        context_emb = self.embed_context(context) if context else None
+        action_embs = self.embed_actions(actions) if actions else None
 
         if not context_emb or not action_embs:
-            raise ValueError("Context and actions must be embedded first")
+            raise ValueError("Context and actions must be provided in the inputs dictionary")
 
         example_string = ""
         example_string += f"shared "
@@ -154,4 +139,4 @@ class ContextualBanditTextEmbedder(Embedder):
                 example_string += f"|{ns} {action_embedding} "
             example_string += "\n"
         # Strip the last newline
-        return example_string[:-1], context_emb, action_embs
+        return example_string[:-1]
