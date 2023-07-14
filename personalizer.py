@@ -1,11 +1,10 @@
-"""Chain that interprets a prompt and executes bash code to perform bash operations."""
 from __future__ import annotations
 
 import logging
 import glob
 import re
 import os
-from typing import Any, Dict, List, Optional, Tuple
+from typing import Any, Dict, List, Optional, Tuple, Union
 
 import vowpal_wabbit_next as vw
 from personalizer_prompt import PROMPT
@@ -55,7 +54,7 @@ class PersonalizerChain(Chain):
         When making predictions, VW is first called to choose action(s) which are then passed into the prompt with the key `{actions}`. After action selection, the LLM (Language Model) is called with the prompt populated by the chosen action(s), and the response is returned.
     """
 
-    llm_chain: LLMChain
+    llm_chain: Chain
     workspace: Optional[vw.Workspace] = None
     next_checkpoint: int = 1
     model_save_dir: str = "./"
@@ -64,7 +63,7 @@ class PersonalizerChain(Chain):
 
     context: str = "context"  #: :meta private:
     output_key: str = "result"  #: :meta private:
-    prompt: Optional[PromptTemplate]
+    prompt: PromptTemplate
 
     class Type(Enum):
         """
@@ -82,7 +81,6 @@ class PersonalizerChain(Chain):
 
     def __init__(
         self,
-        llm: BaseLanguageModel,
         vw_workspace_type: Type,
         model_loading=True,
         large_action_spaces=False,
@@ -184,13 +182,11 @@ class PersonalizerChain(Chain):
     def _call(
         self,
         inputs: Dict[str, Any],
-        preds: Any,
         run_manager: Optional[CallbackManagerForChainRun] = None,
     ) -> Dict[str, str]:
         _run_manager = run_manager or CallbackManagerForChainRun.get_noop_manager()
 
-        t = self.llm_chain.predict(
-            **preds,
+        t = self.llm_chain.run(
             **inputs,
             callbacks=_run_manager.get_child(),
         )
@@ -230,23 +226,28 @@ class PersonalizerChain(Chain):
         return "llm_personalizer_chain"
 
     @classmethod
-    def from_llm(
-        cls, llm: BaseLanguageModel, prompt: PromptTemplate = PROMPT, **kwargs: Any
-    ) -> ContextualBanditPersonalizerChain:
-        llm_chain = LLMChain(llm=llm, prompt=prompt)
-
+    def from_chain(
+        cls, llm_chain: Chain, prompt: PromptTemplate = PROMPT, **kwargs: Any
+    ) -> Union[ContextualBanditPersonalizerChain, SlatesPersonalizerChain]:
         if "vw_workspace_type" not in kwargs:
             raise ValueError("vw_workspace_type must be specified")
         if kwargs.get("vw_workspace_type") is PersonalizerChain.Type.CONTEXTUAL_BANDITS:
             return ContextualBanditPersonalizerChain(
-                llm_chain=llm_chain, llm=llm, **kwargs
+                llm_chain=llm_chain, prompt=prompt, **kwargs
             )
         elif kwargs.get("vw_workspace_type") is PersonalizerChain.Type.SLATES:
             return SlatesPersonalizerChain(
-                llm_chain=llm_chain, llm=llm, **kwargs
+                llm_chain=llm_chain, prompt=prompt, **kwargs
             )
         else:
             raise ValueError("Type not supported")
+
+    @classmethod
+    def from_llm(
+        cls, llm: BaseLanguageModel, prompt: PromptTemplate = PROMPT, **kwargs: Any
+    ) -> Union[ContextualBanditPersonalizerChain, SlatesPersonalizerChain]:
+        llm_chain = LLMChain(llm=llm, prompt=prompt)
+        return PersonalizerChain.from_chain(llm_chain=llm_chain, prompt=prompt, **kwargs)
 
 
     def _learn(self, vw_ex):
@@ -354,10 +355,9 @@ class ContextualBanditPersonalizerChain(PersonalizerChain):
         sampled_prob = sampled_ap[1]
 
         pred_action = actions[sampled_action]
+        inputs['selected'] = pred_action
 
-        llm_resp: Dict[str, Any] = super()._call(
-            run_manager=run_manager, inputs=inputs, preds={'chosen_actions': pred_action}
-        )
+        llm_resp: Dict[str, Any] = super()._call(run_manager=run_manager, inputs=inputs)
 
         # llm_resp: Dict[str, Any] = {self.output_key : ""}
 
@@ -516,10 +516,9 @@ class SlatesPersonalizerChain(PersonalizerChain):
             self.workspace.predict_one(parse_lines(text_parser, self.last_decision.vwtxt)))
         preds = {}
         for i, (j, actions) in enumerate(zip(self.last_decision.label.chosen, self.actions)):
-            preds[self.actions_map[i]] = str(actions[j]) 
-        llm_resp = super()._call(
-            run_manager=run_manager, inputs=preds, preds={}
-        )
+            preds[self.actions_map[i]] = str(actions[j])
+        inputs["preds"] = preds
+        llm_resp = super()._call(run_manager=run_manager, inputs=inputs)
 
         if self.response_checker:
             try:
