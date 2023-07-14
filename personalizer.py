@@ -25,7 +25,7 @@ from enum import Enum
 logger = logging.getLogger(__name__)
 logger.setLevel(logging.INFO)
 ch = logging.StreamHandler()
-formatter = logging.Formatter('%(asctime)s - %(name)s - %(levelname)s - %(message)s')
+formatter = logging.Formatter("%(asctime)s - %(name)s - %(levelname)s - %(message)s")
 ch.setFormatter(formatter)
 ch.setLevel(logging.INFO)
 logger.addHandler(ch)
@@ -57,8 +57,6 @@ class PersonalizerChain(Chain):
     llm_chain: LLMChain
     workspace: vw.Workspace = None
     embeddings_model: SentenceTransformer = None
-    action_embeddings: List = []
-    actions: List = [str]
     next_checkpoint: int = None
     model_save_dir: str = "./"
     response_checker: SelfResponseChecker = None
@@ -75,10 +73,12 @@ class PersonalizerChain(Chain):
         Attributes:
             CONTEXTUAL_BANDITS (tuple): Indicates the use of the Contextual Bandits algorithm.
             CONDITIONAL_CONTEXTUAL_BANDITS (tuple): Indicates the use of the Conditional Contextual Bandits algorithm.
+            SLATES (tuple): Indicates Slates optimization algorithm
         """
 
         CONTEXTUAL_BANDITS = (1,)
         CONDITIONAL_CONTEXTUAL_BANDITS = (2,)
+        SLATES = (3,)
 
     def __init__(
         self,
@@ -90,7 +90,6 @@ class PersonalizerChain(Chain):
         model_loading=True,
         large_action_spaces=False,
         vw_cmd=[],
-        actions: List[str] = [],
         check_response=True,
         model_save_dir="./",
         *args,
@@ -158,13 +157,20 @@ class PersonalizerChain(Chain):
                     "--coin",
                     "--squarecb",
                 ]
+        elif vw_workspace_type == PersonalizerChain.Type.SLATES:
+            if not vw_cmd:
+                vw_cmd = las_cmd + [
+                    "--slates",
+                    "--quiet",
+                    "--interactions=AC",
+                    "--coin",
+                    "--squarecb",
+                ]
         else:
             raise ValueError("No other vw types supported yet")
 
         logger.info(f"vw command: {vw_cmd}")
         # initialize things
-        if actions:
-            self.set_actions(actions)
         if serialized_workspace:
             self.workspace = vw.Workspace(vw_cmd, model_data=serialized_workspace)
         else:
@@ -197,38 +203,6 @@ class PersonalizerChain(Chain):
         :meta private:
         """
         return [self.output_key]
-
-    def set_actions_and_embeddings(self, actions: List[str], action_embeddings: List):
-        """
-        At any time new actions and their embeddings can be set by this function call
-
-        Attributes:
-            actions: a list of strings containing the actions
-            action_embeddings: a list containing the embeddings of the action strings
-        """
-        self.actions = actions
-        self.action_embeddings = action_embeddings
-
-    def set_actions(self, actions: List[str]):
-        """
-        At any time new actions can be set by this function call
-
-        Attributes:
-            actions: a list of strings containing the actions that will be transformed to embeddings using the FeatureEmbeddings
-        """
-        # Build action embeddings
-        self.action_embeddings = []
-        self.actions = actions
-        action_feat_ind_orig = len(self.embeddings_model.encode(""))
-        action_feat_ind = action_feat_ind_orig
-        for d in self.actions:
-            action_str = d
-            action_embed = ""
-            for emb in self.embeddings_model.encode(action_str):
-                action_embed += f"{action_feat_ind}:{emb} "
-                action_feat_ind += 1
-            action_feat_ind = action_feat_ind_orig
-            self.action_embeddings.append(action_embed)
 
     def _call(
         self,
@@ -303,12 +277,47 @@ class PersonalizerChain(Chain):
 
 
 class ContextualBanditPersonalizerChain(PersonalizerChain):
-    latest_context_emb: str = None
-    latest_prob: float = None
-    latest_action: int = None
+    latest_context_emb: Optional[str] = None
+    latest_prob: Optional[float] = None
+    latest_action: Optional[int] = None
+    action_embeddings: List[str] = []
+    actions: List[str] = []
 
-    def __init__(self, *args, **kwargs):
+    def __init__(self, actions: List[str] = None, *args, **kwargs):
         super().__init__(*args, **kwargs)
+        self.set_actions(actions or [])
+
+    def set_actions_and_embeddings(self, actions: List[str], action_embeddings: List):
+        """
+        At any time new actions and their embeddings can be set by this function call
+
+        Attributes:
+            actions: a list of strings containing the actions
+            action_embeddings: a list containing the embeddings of the action strings
+        """
+        self.actions = actions
+        self.action_embeddings = action_embeddings
+
+    def set_actions(self, actions: List[str]):
+        """
+        At any time new actions can be set by this function call
+
+        Attributes:
+            actions: a list of strings containing the actions that will be transformed to embeddings using the FeatureEmbeddings
+        """
+        # Build action embeddings
+        self.action_embeddings = []
+        self.actions = actions
+        action_feat_ind_orig = len(self.embeddings_model.encode(""))
+        action_feat_ind = action_feat_ind_orig
+        for d in self.actions:
+            action_str = d
+            action_embed = ""
+            for emb in self.embeddings_model.encode(action_str):
+                action_embed += f"{action_feat_ind}:{emb} "
+                action_feat_ind += 1
+            action_feat_ind = action_feat_ind_orig
+            self.action_embeddings.append(action_embed)
 
     def to_vw_example_format(self, context_embed, actions, cb_label=None) -> str:
         if cb_label is not None:
