@@ -7,10 +7,10 @@ import re
 import os
 from typing import Any, Dict, List, Optional, Tuple
 
-from sentence_transformers import SentenceTransformer
 import vowpal_wabbit_next as vw
 from personalizer_prompt import PROMPT
-from response_checker import ResponseChecker, LLMResponseChecker
+from response_checker import ResponseChecker, LLMResponseCheckerForCB
+from vw_example_builder import ContextualBanditTextEmbedder, Embedder
 from langchain.prompts.prompt import PromptTemplate
 
 from pydantic import Extra, PrivateAttr
@@ -41,7 +41,6 @@ class PersonalizerChain(Chain):
 
     Attributes:
         vw_workspace_type (Type): The type of personalization algorithm to be used by the VW model.
-        embeddings_model (SentenceTransformer, optional): The type of embeddings to be used for feature representation. Defaults to BERT.
         model_loading (bool, optional): If set to True, the chain will attempt to load an existing VW model from the latest checkpoint file in the {model_save_dir} directory (current directory if none specified). If set to False, it will start training from scratch, potentially overwriting existing files. Defaults to True.
         large_action_spaces (bool, optional): If set to True and vw_cmd has not been specified in the constructor, it will enable large action spaces
         vw_cmd (List[str], optional): Advanced users can set the VW command line to whatever they want, as long as it is compatible with the Type that is specified (Type Enum)
@@ -55,9 +54,6 @@ class PersonalizerChain(Chain):
 
     llm_chain: LLMChain
     workspace: Optional[vw.Workspace] = None
-    embeddings_model: SentenceTransformer = SentenceTransformer(
-        "bert-base-nli-mean-tokens"
-    )
     next_checkpoint: int = 1
     model_save_dir: str = "./"
     response_checker: Optional[ResponseChecker] = None
@@ -253,13 +249,38 @@ class PersonalizerChain(Chain):
 
 
 class ContextualBanditPersonalizerChain(PersonalizerChain):
+    """
+    ContextualBanditPersonalizerChain class that utilizes the Vowpal Wabbit (VW) model for personalization.
+
+    The Chain is initialized with a set of potential actions. For each call to the Chain, a specific action will be chosen based on an input context.
+    This chosen action is then passed to the prompt that will be utilized in the subsequent call to the LLM (Language Model).
+
+    The flow of this chain is:
+    - Chain is initialized with the List of potential actions (and other parameters)
+    - Chain is called with a context
+    - Chain chooses an action based on the context
+    - Chain calls the LLM with the chosen action
+    - LLM returns a response
+    - If the response_checker is specified, the response is checked against the response_checker
+    - The internal model will be updated with the context, action, and reward of the response (how good or bad the response was)
+    - The response is returned
+    
+    Extends:
+        PersonalizerChain
+
+    Attributes:
+        text_embedder: (ContextualBanditTextEmbedder, optional) The text embedder to use for embedding the context and the actions. If not provided, a default embedder is used.
+        actions: (List, required) The list of actions for the Vowpal Wabbit model to choose from. This list can either be a List of str's or a List of Dict's.
+                - Actions provided as a list of strings e.g. actions = ["action1", "action2", "action3"]
+                - If actions are provided as a list of dictionaries, each action should be a dictionary where the keys are namespace names and the values are the corresponding action strings e.g. actions = [{"namespace1": "action1", "namespace2": "action2"}, {"namespace1": "action3", "namespace2": "action4"}]
+    """
     class ResponseResult:
         def __init__(
             self,
-            action_embeddings: List[str],
+            action_embeddings: List[Dict[str, str]],
             chosen_action: int,
             chosen_action_probability: float,
-            context_emb: str,
+            context_emb: Dict[str, str],
             cost: Optional[float],
         ):
             self.action_embeddings = action_embeddings
@@ -269,79 +290,52 @@ class ContextualBanditPersonalizerChain(PersonalizerChain):
             self.cost = cost
 
     latest_response: Optional[ResponseResult] = None
-    action_embeddings: List[str] = []
-    actions: List[str] = []
+    text_embedder: ContextualBanditTextEmbedder = ContextualBanditTextEmbedder("bert-base-nli-mean-tokens")
+    actions: List
 
     def __init__(self, *args, **kwargs):
         super().__init__(*args, **kwargs)
-        self.set_actions(self.actions)
-
-    def set_actions_and_embeddings(self, actions: List[str], action_embeddings: List):
+        self.text_embedder.embed_actions(self.actions)
+    
+    def set_actions(self, actions: List):
         """
-        At any time new actions and their embeddings can be set by this function call
+        Set the potential actions for the Vowpal Wabbit (VW) model to choose from.
 
         Attributes:
-            actions: a list of strings containing the actions
-            action_embeddings: a list containing the embeddings of the action strings
+            actions: (List, required) The list of actions for the VW model to choose from. This list can either be a List of str's or a List of Dict's.
+                - Actions provided as a list of strings e.g. actions = ["action1", "action2", "action3"]
+                - If actions are provided as a list of dictionaries, each action should be a dictionary where the keys are namespace names and the values are the corresponding action strings e.g. actions = [{"namespace1": "action1", "namespace2": "action2"}, {"namespace1": "action3", "namespace2": "action4"}]
         """
         self.actions = actions
-        self.action_embeddings = action_embeddings
-
-    def set_actions(self, actions: List[str]):
-        """
-        At any time new actions can be set by this function call
-
-        Attributes:
-            actions: a list of strings containing the actions that will be transformed to embeddings using the FeatureEmbeddings
-        """
-        # Build action embeddings
-        self.action_embeddings = []
-        self.actions = actions
-        action_feat_ind_orig = len(self.embeddings_model.encode(""))
-        action_feat_ind = action_feat_ind_orig
-        for d in self.actions:
-            action_str = d
-            action_embed = ""
-            for emb in self.embeddings_model.encode(action_str):
-                action_embed += f"{action_feat_ind}:{emb} "
-                action_feat_ind += 1
-            action_feat_ind = action_feat_ind_orig
-            self.action_embeddings.append(action_embed)
-
-    def to_vw_example_format(self, context_embed, action_embs, cb_label=None) -> str:
-        if cb_label is not None:
-            chosen_action, cost, prob = cb_label
-        example_string = ""
-        example_string += f"shared |Context {context_embed}\n"
-        for i, action_embedding in enumerate(action_embs):
-            if cb_label is not None and chosen_action == i:
-                example_string += "{}:{}:{} ".format(chosen_action, cost, prob)
-            example_string += "|Action {} \n".format(action_embedding)
-        # Strip the last newline
-        return example_string[:-1]
+        self.text_embedder.embed_actions(actions)
 
     def _call(
         self,
         inputs: Dict[str, Any],
         run_manager: Optional[CallbackManagerForChainRun] = None,
     ) -> Dict[str, Any]:
+        """
+        When chain.run() is called with the given inputs, this function is called. It is responsible for calling the VW model to choose an action based on the `context`, and then calling the LLM (Language Model) with the chosen action to generate a response.
+
+        Attributes:
+            inputs: (Dict, required) The inputs to the chain. The inputs must contain a key `context` which is the context to be used for selecting an action that will be passed to the LLM prompt.
+            run_manager: (CallbackManagerForChainRun, optional) The callback manager to use for this run. If not provided, a default callback manager is used.
+            
+        Returns:
+            A dictionary containing:
+                - `response`: The response generated by the LLM (Language Model).
+                - `response_result`: A ResponseResult object containing all the information needed to learn the reward for the chosen action at a later point. If an automatic response_checker is not provided, then this object can be used at a later point with the `learn_delayed_reward()` function to learn the delayed reward and update the Vowpal Wabbit model.
+        """
         _run_manager = run_manager or CallbackManagerForChainRun.get_noop_manager()
 
-        if not self.actions or not self.action_embeddings:
-            raise ValueError("Actions must be set before calling the chain")
         if self.workspace is None:
             raise RuntimeError("Workspace must be set before calling the chain")
 
-        context = inputs[self.context]
         text_parser = vw.TextFormatParser(self.workspace)
 
-        context_embed = ""
-        feat = 0
-        for emb in self.embeddings_model.encode(context):
-            context_embed += f"{feat}:{emb} "
-            feat += 1
-        # Only supports single example per prompt
-        vw_ex = self.to_vw_example_format(context_embed, self.action_embeddings)
+        context = inputs[self.context]
+        self.text_embedder.embed_context(context)
+        vw_ex = self.text_embedder.to_vw_format()
         multi_ex = parse_lines(text_parser, vw_ex)
         preds: List[Tuple[int, float]] = self.workspace.predict_one(multi_ex)
         prob_sum = sum(prob for _, prob in preds)
@@ -353,10 +347,10 @@ class ContextualBanditPersonalizerChain(PersonalizerChain):
         sampled_action = sampled_ap[0]
         sampled_prob = sampled_ap[1]
 
-        predicted_action_str = self.actions[sampled_action]
+        pred_action = self.actions[sampled_action]
 
-        llm_resp:Dict[str, Any] = super()._call(
-            run_manager=run_manager, inputs=inputs, preds=predicted_action_str
+        llm_resp: Dict[str, Any] = super()._call(
+            run_manager=run_manager, inputs=inputs, preds=pred_action
         )
         latest_cost = None
 
@@ -365,18 +359,13 @@ class ContextualBanditPersonalizerChain(PersonalizerChain):
                 cost = -1.0 * self.response_checker.grade_response(
                     inputs=inputs,
                     llm_response=llm_resp[self.output_key],
-                    chosen_action=predicted_action_str,
+                    chosen_action=pred_action,
                 )
-
                 latest_cost = cost
-
                 text_parser = vw.TextFormatParser(self.workspace)
-
                 cb_label = (sampled_action, cost, sampled_prob)
 
-                vw_ex = self.to_vw_example_format(
-                    context_embed, self.action_embeddings, cb_label
-                )
+                vw_ex = self.text_embedder.to_vw_format(cb_label=cb_label)
                 multi_ex = parse_lines(text_parser, vw_ex)
                 self.workspace.learn_one(multi_ex)
 
@@ -388,8 +377,8 @@ class ContextualBanditPersonalizerChain(PersonalizerChain):
         self.latest_response = ContextualBanditPersonalizerChain.ResponseResult(
             chosen_action=sampled_action,
             chosen_action_probability=sampled_prob,
-            context_emb=context_embed,
-            action_embeddings=self.action_embeddings,
+            context_emb=self.text_embedder.get_context_embedding(),
+            action_embeddings=self.text_embedder.get_action_embeddings(),
             cost=latest_cost,
         )
 
@@ -414,7 +403,6 @@ class ContextualBanditPersonalizerChain(PersonalizerChain):
                 "check_response is set to True, this must be turned off for explicit feedback and training to be provided, or overriden by calling the method with force_reward=True"
             )
         text_parser = vw.TextFormatParser(self.workspace)
-
         cost = -1.0 * reward
 
         cb_label = (
@@ -423,15 +411,15 @@ class ContextualBanditPersonalizerChain(PersonalizerChain):
             response_result.chosen_action_probability,
         )
 
-        vw_ex = self.to_vw_example_format(
-            response_result.context_emb, response_result.action_embeddings, cb_label
-        )
+        vw_ex = self.text_embedder.to_vw_format(cb_label=cb_label, context=response_result.context_emb, actions=response_result.action_embeddings)
+
         multi_ex = parse_lines(text_parser, vw_ex)
         self.workspace.learn_one(multi_ex)
 
-
 # ### TODO:
-# - add a callback for them to define the features they want
 # - persist data to log file?
 # - would this work with a longer chain?
-# - make more namespaces available to the user
+# - fix save_progress to not override existing file
+# - Naming: is LLMResponseChecker a good enough name?, Personalizer? CB how should they be named for a good API?
+# - Good documentation: check langchain requirements we are adding explanations on the functions as we go
+# - be able to specify vw model file name
