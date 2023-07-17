@@ -20,6 +20,7 @@ from langchain.base_language import BaseLanguageModel
 from langchain.callbacks.manager import CallbackManagerForChainRun
 from langchain.chains.base import Chain
 from langchain.chains.llm import LLMChain
+from itertools import chain
 from enum import Enum
 
 logger = logging.getLogger(__name__)
@@ -185,7 +186,7 @@ class PersonalizerChain(Chain):
         _run_manager = run_manager or CallbackManagerForChainRun.get_noop_manager()
 
         t = self.llm_chain.predict(
-            actions=[preds],
+            **preds,
             **inputs,
             callbacks=_run_manager.get_child(),
         )
@@ -239,11 +240,10 @@ class PersonalizerChain(Chain):
             return ContextualBanditPersonalizerChain(
                 llm_chain=llm_chain, llm=llm, **kwargs
             )
-        elif (
-            kwargs.get("vw_workspace_type")
-            is PersonalizerChain.Type.CONDITIONAL_CONTEXTUAL_BANDITS
-        ):
-            raise ValueError("Not implemented yet")
+        elif kwargs.get("vw_workspace_type") is PersonalizerChain.Type.SLATES:
+            return SlatesPersonalizerChain(
+                llm_chain=llm_chain, llm=llm, **kwargs
+            )
         else:
             raise ValueError("Type not supported")
 
@@ -350,7 +350,7 @@ class ContextualBanditPersonalizerChain(PersonalizerChain):
         pred_action = self.actions[sampled_action]
 
         llm_resp: Dict[str, Any] = super()._call(
-            run_manager=run_manager, inputs=inputs, preds=pred_action
+            run_manager=run_manager, inputs=inputs, preds={'actions': [predicted_action_str]}
         )
         latest_cost = None
 
@@ -415,6 +415,127 @@ class ContextualBanditPersonalizerChain(PersonalizerChain):
 
         multi_ex = parse_lines(text_parser, vw_ex)
         self.workspace.learn_one(multi_ex)
+
+
+class SlatesPersonalizerChain(PersonalizerChain):
+    class Label:
+        chosen: List[int]
+        p: List[float]
+        r: Optional[float]
+
+        def __init__(self, vwpred: List[List[Tuple[int, float]]], r: Optional[float] = None):
+            self.chosen = [p[0][0] for p in vwpred]
+            self.p = [p[0][1] for p in vwpred]
+            self.r = r
+
+        def ap(self):
+            return zip(self.chosen, self.p)
+
+    class Decision:
+        context: Optional[str]
+        actions: List[List[str]]
+        label: Optional[SlatesPersonalizerChain.Label]
+
+        def __init__(self, actions, context=None, label=None):
+            self.context = context
+            self.actions = actions
+            self.label = label
+
+        @property
+        def vwtxt(self):
+            context = [f'slates shared {-self.label.r if self.label else ""} |Context {self.context or ""}']
+            actions = chain.from_iterable([[
+                f'slates action {i} |Action {action}'] 
+                for i, slot in enumerate(self.actions) for action in slot])
+            ps = [f'{a}:{p}' for a, p in self.label.ap()] if self.label else [''] * len(self.actions)
+            slots = [f'slates slot {p} |' for p in ps]
+            return '\n'.join(list(chain.from_iterable([context, actions, slots]))) # TODO: remove
+
+    last_decision: Optional[Decision] = None
+
+    action_embeddings: List[List[str]] = []
+    actions: List[List[str]] = []
+    actions_map: List[str] = []
+
+    def __init__(self, actions: Dict[str, List[str]] = None, *args, **kwargs):
+        super().__init__(*args, **kwargs)
+        self.set_actions(actions or {})
+
+    def set_actions(self, actions: Dict[str, List[str]]):
+        """
+        At any time new actions can be set by this function call
+
+        Attributes:
+            actions: a list of list strings containing the actions that will be transformed to embeddings using the FeatureEmbeddings
+        """
+        # Build action embeddings
+        for (i, (k, v)) in enumerate((actions.items())):
+            self.actions.append(v)
+            self.actions_map.append(k)
+            
+        def _str(embedding):
+            return ' '.join([f'{i}:{e}' for i, e in enumerate(embedding)])
+        
+        self.action_embeddings = [
+            [_str(self.embeddings_model.encode(action)) for action in slot] for slot in self.actions]
+
+    def _call(
+        self,
+        inputs: Dict[str, Any],
+        run_manager: Optional[CallbackManagerForChainRun] = None,
+    ) -> Dict[str, str]:
+        _run_manager = run_manager or CallbackManagerForChainRun.get_noop_manager()
+        text_parser = vw.TextFormatParser(self.workspace)
+        context = inputs[self.context]
+
+        context_embed = ""
+        feat = 0
+        for emb in self.embeddings_model.encode(context):
+            context_embed += f"{feat}:{emb} "
+            feat += 1
+
+        self.last_decision = self.Decision(
+            self.action_embeddings,
+            context = context_embed)
+
+        self.last_decision.label = self.Label(
+            self.workspace.predict_one(parse_lines(text_parser, self.last_decision.vwtxt)))
+        preds = {}
+        for i, (j, actions) in enumerate(zip(self.last_decision.label.chosen, self.actions)):
+            preds[self.actions_map[i]] = actions[j] 
+        llm_resp = super()._call(
+            run_manager=run_manager, inputs=inputs, preds=preds
+        )
+
+        if self.response_checker:
+            try:
+                self.last_decision.label.r = self.response_checker.grade_response(
+                    inputs={"context": context}, llm_response=llm_resp[self.output_key]
+                )
+                self.workspace.learn_one(parse_lines(text_parser, self.last_decision.vwtxt))
+
+            except Exception as e:
+                print(f"this is the error: {e}")
+                logger.info(
+                    "The LLM was not able to rank and the chain was not able to adjust to this response"
+                )
+
+        return llm_resp
+
+    def learn_with_specific_cost(self, cost: int, force_cost=False):
+        """
+        Learn will be called with the cost specified
+        Will raise an error if check_response is set to True and force_cost=True was not provided during the method call
+        force_cost should be used if the check_response failed to check the response correctly
+        """
+        if self.check_response and not force_cost:
+            raise RuntimeError(
+                "check_response is set to True, this must be turned off for explicit feedback and training to be provided, or overriden by calling the method with force_cost=True"
+            )
+        self.last_decision.label.r = -cost
+        text_parser = vw.TextFormatParser(self.workspace)
+        self.workspace.learn_one(parse_lines(text_parser, self.last_decision.vwtxt))
+
 
 # ### TODO:
 # - persist data to log file?
