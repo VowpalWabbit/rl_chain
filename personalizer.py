@@ -22,6 +22,7 @@ from langchain.chains.base import Chain
 from langchain.chains.llm import LLMChain
 from itertools import chain
 from enum import Enum
+from sentence_transformers import SentenceTransformer
 
 logger = logging.getLogger(__name__)
 logger.setLevel(logging.INFO)
@@ -425,6 +426,18 @@ class ContextualBanditPersonalizerChain(PersonalizerChain):
         self.workspace.learn_one(multi_ex)
 
 
+class _Embed:
+    def __init__(self, impl):
+        self.impl = impl
+
+    def __str__(self):
+        return self.impl
+
+def Embed(anything):
+    if isinstance(anything, list):
+        return [_Embed(v) for v in anything]
+    return _Embed(anything)
+
 class SlatesPersonalizerChain(PersonalizerChain):
     class Label:
         chosen: List[int]
@@ -440,18 +453,16 @@ class SlatesPersonalizerChain(PersonalizerChain):
             return zip(self.chosen, self.p)
 
     class Decision:
-        context: Optional[str]
         actions: List[List[str]]
         label: Optional[SlatesPersonalizerChain.Label]
 
-        def __init__(self, actions, context=None, label=None):
-            self.context = context
+        def __init__(self, actions, label=None):
             self.actions = actions
             self.label = label
 
         @property
         def vwtxt(self):
-            context = [f'slates shared {-self.label.r if self.label else ""} |Context {self.context or ""}']
+            context = [f'slates shared {-self.label.r if self.label else ""} |']
             actions = chain.from_iterable([[
                 f'slates action {i} |Action {action}'] 
                 for i, slot in enumerate(self.actions) for action in slot])
@@ -464,10 +475,11 @@ class SlatesPersonalizerChain(PersonalizerChain):
     action_embeddings: List[List[str]] = []
     actions: List[List[str]] = []
     actions_map: List[str] = []
+    embeddings_model: Optional[SentenceTransformer] = None
 
-    def __init__(self, actions: Dict[str, List[str]] = None, *args, **kwargs):
+    def __init__(self, *args, **kwargs):
         super().__init__(*args, **kwargs)
-        self.set_actions(actions or {})
+        self.embeddings_model = SentenceTransformer("bert-base-nli-mean-tokens")
 
     def set_actions(self, actions: Dict[str, List[str]]):
         """
@@ -485,34 +497,28 @@ class SlatesPersonalizerChain(PersonalizerChain):
             return ' '.join([f'{i}:{e}' for i, e in enumerate(embedding)])
         
         self.action_embeddings = [
-            [_str(self.embeddings_model.encode(action)) for action in slot] for slot in self.actions]
+            [_str(self.embeddings_model.encode(action.impl)) if isinstance(action, _Embed) else action for action in slot] for slot in self.actions]
 
     def _call(
         self,
         inputs: Dict[str, Any],
         run_manager: Optional[CallbackManagerForChainRun] = None,
     ) -> Dict[str, str]:
+        self.set_actions({k: inputs[k] if isinstance(inputs[k], list) else [inputs[k]] for k in self.llm_chain.prompt.input_variables})
         _run_manager = run_manager or CallbackManagerForChainRun.get_noop_manager()
         text_parser = vw.TextFormatParser(self.workspace)
         context = inputs[self.context]
 
-        context_embed = ""
-        feat = 0
-        for emb in self.embeddings_model.encode(context):
-            context_embed += f"{feat}:{emb} "
-            feat += 1
-
         self.last_decision = self.Decision(
-            self.action_embeddings,
-            context = context_embed)
+            self.action_embeddings)
 
         self.last_decision.label = self.Label(
             self.workspace.predict_one(parse_lines(text_parser, self.last_decision.vwtxt)))
         preds = {}
         for i, (j, actions) in enumerate(zip(self.last_decision.label.chosen, self.actions)):
-            preds[self.actions_map[i]] = actions[j] 
+            preds[self.actions_map[i]] = str(actions[j]) 
         llm_resp = super()._call(
-            run_manager=run_manager, inputs=inputs, preds=preds
+            run_manager=run_manager, inputs=preds, preds={}
         )
 
         if self.response_checker:
