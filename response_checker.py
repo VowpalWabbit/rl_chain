@@ -14,12 +14,12 @@ class ResponseChecker(ABC):
 
     @abstractmethod
     def grade_response(
-        self, inputs: Dict[str, Any], llm_response: str, chosen_action: str
+        self, inputs: Dict[str, Any], llm_response: str, **kwargs
     ) -> float:
         pass
 
 
-class LLMResponseChecker(ResponseChecker):
+class LLMResponseCheckerForCB(ResponseChecker):
     llm_chain: LLMChain
     prompt: PromptTemplate
 
@@ -43,8 +43,14 @@ class LLMResponseChecker(ResponseChecker):
         self.llm_chain = LLMChain(llm=llm, prompt=self.prompt)
 
     def grade_response(
-        self, inputs: Dict[str, Any], llm_response: str, chosen_action: str
+        self, inputs: Dict[str, Any], llm_response: str, **kwargs
     ) -> float:
+        
+        if "chosen_action" not in kwargs:
+            raise ValueError("The chosen action is not provided to the LLM response Checker, please provide the chosen action")
+
+        chosen_action = kwargs["chosen_action"]
+        
         ranking = self.llm_chain.predict(**inputs, action=chosen_action)
         ranking = ranking.strip()
         try:

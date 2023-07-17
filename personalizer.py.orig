@@ -349,8 +349,13 @@ class ContextualBanditPersonalizerChain(PersonalizerChain):
 
         pred_action = self.actions[sampled_action]
 
-        llm_resp: Dict[str, Any] = super()._call(
+<<<<<<< HEAD
+        llm_resp:Dict[str, Any] = super()._call(
             run_manager=run_manager, inputs=inputs, preds={'actions': [predicted_action_str]}
+=======
+        llm_resp: Dict[str, Any] = super()._call(
+            run_manager=run_manager, inputs=inputs, preds=pred_action
+>>>>>>> master
         )
         latest_cost = None
 
@@ -416,6 +421,7 @@ class ContextualBanditPersonalizerChain(PersonalizerChain):
         multi_ex = parse_lines(text_parser, vw_ex)
         self.workspace.learn_one(multi_ex)
 
+<<<<<<< HEAD
 
 class SlatesPersonalizerChain(PersonalizerChain):
     class Label:
@@ -537,6 +543,9 @@ class SlatesPersonalizerChain(PersonalizerChain):
         self.workspace.learn_one(parse_lines(text_parser, self.last_decision.vwtxt))
 
 
+
+=======
+>>>>>>> master
 # ### TODO:
 # - persist data to log file?
 # - would this work with a longer chain?
