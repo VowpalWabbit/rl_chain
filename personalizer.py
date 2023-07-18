@@ -246,6 +246,12 @@ class PersonalizerChain(Chain):
             raise ValueError("Type not supported")
 
 
+    def _learn(self, vw_ex):
+        text_parser = vw.TextFormatParser(self.workspace)
+        multi_ex = parse_lines(text_parser, vw_ex)
+        self.workspace.learn_one(multi_ex)
+
+
 class ContextualBanditPersonalizerChain(PersonalizerChain):
     """
     ContextualBanditPersonalizerChain class that utilizes the Vowpal Wabbit (VW) model for personalization.
@@ -361,15 +367,13 @@ class ContextualBanditPersonalizerChain(PersonalizerChain):
                     chosen_action=pred_action,
                 )
                 latest_cost = cost
-                text_parser = vw.TextFormatParser(self.workspace)
                 cb_label = (sampled_action, cost, sampled_prob)
 
                 vw_ex = self.text_embedder.to_vw_format(
                     cb_label=cb_label,
                     inputs=inputs,
                 )
-                multi_ex = parse_lines(text_parser, vw_ex)
-                self.workspace.learn_one(multi_ex)
+                self._learn(vw_ex)
 
             except Exception as e:
                 logger.info(
@@ -403,7 +407,6 @@ class ContextualBanditPersonalizerChain(PersonalizerChain):
             raise RuntimeError(
                 "check_response is set to True, this must be turned off for explicit feedback and training to be provided, or overriden by calling the method with force_reward=True"
             )
-        text_parser = vw.TextFormatParser(self.workspace)
         cost = -1.0 * reward
 
         cb_label = (
@@ -416,9 +419,7 @@ class ContextualBanditPersonalizerChain(PersonalizerChain):
             cb_label=cb_label,
             inputs=response_result.inputs,
         )
-
-        multi_ex = parse_lines(text_parser, vw_ex)
-        self.workspace.learn_one(multi_ex)
+        self._learn(vw_ex)
 
 
 class _Embed:
@@ -521,7 +522,7 @@ class SlatesPersonalizerChain(PersonalizerChain):
                 self.last_decision.label.r = self.response_checker.grade_response(
                     inputs=preds, llm_response=llm_resp[self.output_key]
                 )
-                self.workspace.learn_one(parse_lines(text_parser, self.last_decision.vwtxt))
+                self._learn(self.last_decision.vwtxt)
 
             except Exception as e:
                 print(f"this is the error: {e}")
@@ -532,19 +533,7 @@ class SlatesPersonalizerChain(PersonalizerChain):
         return llm_resp
 
     def learn_with_specific_cost(self, cost: int, force_cost=False):
-        """
-        Learn will be called with the cost specified
-        Will raise an error if check_response is set to True and force_cost=True was not provided during the method call
-        force_cost should be used if the check_response failed to check the response correctly
-        """
-        if self.check_response and not force_cost:
-            raise RuntimeError(
-                "check_response is set to True, this must be turned off for explicit feedback and training to be provided, or overriden by calling the method with force_cost=True"
-            )
-        self.last_decision.label.r = -cost
-        text_parser = vw.TextFormatParser(self.workspace)
-        self.workspace.learn_one(parse_lines(text_parser, self.last_decision.vwtxt))
-
+        ... # TODO: implement
 
 # ### TODO:
 # - persist data to log file?
