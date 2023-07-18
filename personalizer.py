@@ -253,59 +253,56 @@ class ContextualBanditPersonalizerChain(PersonalizerChain):
     This chosen action is then passed to the prompt that will be utilized in the subsequent call to the LLM (Language Model).
 
     The flow of this chain is:
-    - Chain is initialized with the List of potential actions (and other parameters)
-    - Chain is called with a context
+    - Chain is initialized
+    - Chain is called input containing the context and the List of potential actions
     - Chain chooses an action based on the context
     - Chain calls the LLM with the chosen action
     - LLM returns a response
     - If the response_checker is specified, the response is checked against the response_checker
     - The internal model will be updated with the context, action, and reward of the response (how good or bad the response was)
     - The response is returned
-    
+
+    input dictionary expects:
+        - context: (str, required) The context to use for personalization
+        - actions: (List, required) The list of actions for the Vowpal Wabbit model to choose from. This list can either be a List of str's or a List of Dict's.
+                - Actions provided as a list of strings e.g. actions = ["action1", "action2", "action3"]
+                - If actions are provided as a list of dictionaries, each action should be a dictionary where the keys are namespace names and the values are the corresponding action strings e.g. actions = [{"namespace1": "action1", "namespace2": "action2"}, {"namespace1": "action3", "namespace2": "action4"}]    
     Extends:
         PersonalizerChain
 
     Attributes:
         text_embedder: (ContextualBanditTextEmbedder, optional) The text embedder to use for embedding the context and the actions. If not provided, a default embedder is used.
-        actions: (List, required) The list of actions for the Vowpal Wabbit model to choose from. This list can either be a List of str's or a List of Dict's.
-                - Actions provided as a list of strings e.g. actions = ["action1", "action2", "action3"]
-                - If actions are provided as a list of dictionaries, each action should be a dictionary where the keys are namespace names and the values are the corresponding action strings e.g. actions = [{"namespace1": "action1", "namespace2": "action2"}, {"namespace1": "action3", "namespace2": "action4"}]
     """
 
     class ResponseResult:
         def __init__(
             self,
-            action_embeddings: List[Dict[str, str]],
             chosen_action: int,
             chosen_action_probability: float,
-            context_embeddings: Dict[str, str],
             cost: Optional[float],
+            inputs: Dict[str, Any],
         ):
-            self.action_embeddings = action_embeddings
             self.chosen_action = chosen_action
             self.chosen_action_probability = chosen_action_probability
-            self.context_embeddings = context_embeddings
             self.cost = cost
+            self.inputs = inputs
 
     latest_response: Optional[ResponseResult] = None
     text_embedder: ContextualBanditTextEmbedder = ContextualBanditTextEmbedder(
         "bert-base-nli-mean-tokens"
     )
-    actions: List
+    actions: str = "actions"  #: :meta private:
 
     def __init__(self, *args, **kwargs):
         super().__init__(*args, **kwargs)
+    
+    @property
+    def input_keys(self) -> List[str]:
+        """Expect input key.
 
-    def set_actions(self, actions: List):
+        :meta private:
         """
-        Set the potential actions for the Vowpal Wabbit (VW) model to choose from.
-
-        Attributes:
-            actions: (List, required) The list of actions for the VW model to choose from. This list can either be a List of str's or a List of Dict's.
-                - Actions provided as a list of strings e.g. actions = ["action1", "action2", "action3"]
-                - If actions are provided as a list of dictionaries, each action should be a dictionary where the keys are namespace names and the values are the corresponding action strings e.g. actions = [{"namespace1": "action1", "namespace2": "action2"}, {"namespace1": "action3", "namespace2": "action4"}]
-        """
-        self.actions = actions
+        return [self.actions, self.context]
 
     def _call(
         self,
@@ -316,7 +313,7 @@ class ContextualBanditPersonalizerChain(PersonalizerChain):
         When chain.run() is called with the given inputs, this function is called. It is responsible for calling the VW model to choose an action based on the `context`, and then calling the LLM (Language Model) with the chosen action to generate a response.
 
         Attributes:
-            inputs: (Dict, required) The inputs to the chain. The inputs must contain a key `context` which is the context to be used for selecting an action that will be passed to the LLM prompt.
+            inputs: (Dict, required) The inputs to the chain. The inputs must contain a keys `context` and `actions`. That is the context to be used for selecting an action that will be passed to the LLM prompt.
             run_manager: (CallbackManagerForChainRun, optional) The callback manager to use for this run. If not provided, a default callback manager is used.
             
         Returns:
@@ -332,10 +329,8 @@ class ContextualBanditPersonalizerChain(PersonalizerChain):
 
         text_parser = vw.TextFormatParser(self.workspace)
 
-        context = inputs[self.context]
-        vw_ex, context_embeddings, action_embeddings = self.text_embedder.to_vw_format(
-            context_str=context, action_strs=self.actions
-        )
+        actions = inputs[self.actions]
+        vw_ex = self.text_embedder.to_vw_format(inputs=inputs)
         multi_ex = parse_lines(text_parser, vw_ex)
         preds: List[Tuple[int, float]] = self.workspace.predict_one(multi_ex)
         prob_sum = sum(prob for _, prob in preds)
@@ -347,11 +342,14 @@ class ContextualBanditPersonalizerChain(PersonalizerChain):
         sampled_action = sampled_ap[0]
         sampled_prob = sampled_ap[1]
 
-        pred_action = self.actions[sampled_action]
+        pred_action = actions[sampled_action]
 
         llm_resp: Dict[str, Any] = super()._call(
-            run_manager=run_manager, inputs=inputs, preds={'actions': [pred_action]}
+            run_manager=run_manager, inputs=inputs, preds={'chosen_actions': [pred_action]}
         )
+
+        # llm_resp: Dict[str, Any] = {self.output_key : ""}
+
         latest_cost = None
 
         if self.response_checker:
@@ -365,10 +363,9 @@ class ContextualBanditPersonalizerChain(PersonalizerChain):
                 text_parser = vw.TextFormatParser(self.workspace)
                 cb_label = (sampled_action, cost, sampled_prob)
 
-                vw_ex, _, _ = self.text_embedder.to_vw_format(
+                vw_ex = self.text_embedder.to_vw_format(
                     cb_label=cb_label,
-                    action_embs=action_embeddings,
-                    context_embs=context_embeddings,
+                    inputs=inputs,
                 )
                 multi_ex = parse_lines(text_parser, vw_ex)
                 self.workspace.learn_one(multi_ex)
@@ -381,8 +378,7 @@ class ContextualBanditPersonalizerChain(PersonalizerChain):
         self.latest_response = ContextualBanditPersonalizerChain.ResponseResult(
             chosen_action=sampled_action,
             chosen_action_probability=sampled_prob,
-            context_embeddings=context_embeddings,
-            action_embeddings=action_embeddings,
+            inputs=inputs,
             cost=latest_cost,
         )
 
@@ -415,10 +411,9 @@ class ContextualBanditPersonalizerChain(PersonalizerChain):
             response_result.chosen_action_probability,
         )
 
-        vw_ex, _, _ = self.text_embedder.to_vw_format(
+        vw_ex = self.text_embedder.to_vw_format(
             cb_label=cb_label,
-            context_embs=response_result.context_embeddings,
-            action_embs=response_result.action_embeddings,
+            inputs=response_result.inputs,
         )
 
         multi_ex = parse_lines(text_parser, vw_ex)
