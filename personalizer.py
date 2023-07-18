@@ -519,7 +519,7 @@ class SlatesPersonalizerChain(PersonalizerChain):
         if self.response_checker:
             try:
                 self.last_decision.label.r = self.response_checker.grade_response(
-                    inputs={"context": context}, llm_response=llm_resp[self.output_key]
+                    inputs=preds, llm_response=llm_resp[self.output_key]
                 )
                 self.workspace.learn_one(parse_lines(text_parser, self.last_decision.vwtxt))
 
