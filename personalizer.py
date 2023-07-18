@@ -10,6 +10,7 @@ from typing import Any, Dict, List, Optional, Tuple
 import vowpal_wabbit_next as vw
 from personalizer_prompt import PROMPT
 from response_checker import ResponseChecker, LLMResponseCheckerForCB
+from vw_logger import VwLogger
 from vw_example_builder import ContextualBanditTextEmbedder, Embedder
 from langchain.prompts.prompt import PromptTemplate
 
@@ -59,6 +60,7 @@ class PersonalizerChain(Chain):
     next_checkpoint: int = 1
     model_save_dir: str = "./"
     response_checker: Optional[ResponseChecker] = None
+    vw_logger: VwLogger = None
 
     context: str = "context"  #: :meta private:
     output_key: str = "result"  #: :meta private:
@@ -85,11 +87,12 @@ class PersonalizerChain(Chain):
         model_loading=True,
         large_action_spaces=False,
         vw_cmd=[],
+        vw_logs: Optional[Union[str, os.PathLike]] = None,
         *args,
         **kwargs,
     ):
         super().__init__(*args, **kwargs)
-
+        self.vw_logger = VwLogger(vw_logs)
         next_checkpoint = 1
         serialized_workspace = None
 
@@ -247,6 +250,7 @@ class PersonalizerChain(Chain):
 
 
     def _learn(self, vw_ex):
+        self.vw_logger.log(vw_ex)
         text_parser = vw.TextFormatParser(self.workspace)
         multi_ex = parse_lines(text_parser, vw_ex)
         self.workspace.learn_one(multi_ex)
