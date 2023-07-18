@@ -356,7 +356,7 @@ class ContextualBanditPersonalizerChain(PersonalizerChain):
         pred_action = actions[sampled_action]
 
         llm_resp: Dict[str, Any] = super()._call(
-            run_manager=run_manager, inputs=inputs, preds={'chosen_actions': [pred_action]}
+            run_manager=run_manager, inputs=inputs, preds={'chosen_actions': pred_action}
         )
 
         # llm_resp: Dict[str, Any] = {self.output_key : ""}
