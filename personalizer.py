@@ -368,7 +368,7 @@ class ContextualBanditPersonalizerChain(PersonalizerChain):
                 cost = -1.0 * self.response_checker.grade_response(
                     inputs=inputs,
                     llm_response=llm_resp[self.output_key],
-                    chosen_action=pred_action,
+                    selected=pred_action,
                 )
                 latest_cost = cost
                 cb_label = (sampled_action, cost, sampled_prob)
@@ -517,8 +517,7 @@ class SlatesPersonalizerChain(PersonalizerChain):
         preds = {}
         for i, (j, actions) in enumerate(zip(self.last_decision.label.chosen, self.actions)):
             preds[self.actions_map[i]] = str(actions[j])
-        inputs["preds"] = preds
-        llm_resp = super()._call(run_manager=run_manager, inputs=inputs)
+        llm_resp = super()._call(run_manager=run_manager, inputs=preds)
 
         if self.response_checker:
             try:
@@ -540,7 +539,6 @@ class SlatesPersonalizerChain(PersonalizerChain):
 
 # ### TODO:
 # - persist data to log file?
-# - would this work with a longer chain?
 # - fix save_progress to not override existing file
 # - Naming: is LLMResponseChecker a good enough name?, Personalizer? CB how should they be named for a good API?
 # - Good documentation: check langchain requirements we are adding explanations on the functions as we go
