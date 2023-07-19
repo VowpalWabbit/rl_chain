@@ -66,6 +66,7 @@ class PersonalizerChain(Chain):
     context: str = "context"  #: :meta private:
     output_key: str = "result"  #: :meta private:
     prompt: Optional[PromptTemplate]
+    reward: List[float] = []
 
     class Type(Enum):
         """
@@ -94,6 +95,7 @@ class PersonalizerChain(Chain):
     ):
         super().__init__(*args, **kwargs)
         self.vw_logger = VwLogger(vw_logs)
+        self.reward = []
         next_checkpoint = 1
         serialized_workspace = None
 
@@ -371,6 +373,7 @@ class ContextualBanditPersonalizerChain(PersonalizerChain):
                     llm_response=llm_resp[self.output_key],
                     chosen_action=pred_action,
                 )
+                self.reward.append(-cost)
                 latest_cost = cost
                 cb_label = (sampled_action, cost, sampled_prob)
 
@@ -412,8 +415,8 @@ class ContextualBanditPersonalizerChain(PersonalizerChain):
             raise RuntimeError(
                 "check_response is set to True, this must be turned off for explicit feedback and training to be provided, or overriden by calling the method with force_reward=True"
             )
-        cost = -1.0 * reward
-
+        self.reward.append(reward)
+        cost = -1.0 * reward      
         cb_label = (
             response_result.chosen_action,
             cost,
@@ -492,6 +495,7 @@ class SlatesPersonalizerChain(PersonalizerChain):
                 self.last_decision.label.r = self.response_checker.grade_response(
                     inputs=preds, llm_response=llm_resp[self.output_key]
                 )
+                self.reward.append(self.last_decision.label.r)
                 self._learn(self.last_decision.vwtxt)
 
             except Exception as e:
