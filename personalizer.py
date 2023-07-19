@@ -468,7 +468,7 @@ class SlatesPersonalizerChain(PersonalizerChain):
             return ' '.join([f'{i}:{e}' for i, e in enumerate(embedding)])
         
         action_features = [
-            [_str(self.embeddings_model.encode(action.impl)) if isinstance(action, _Embed) else action for action in slot] for slot in actions]
+            [_str(self.embeddings_model.encode(action.impl)) if isinstance(action, _Embed) else action.replace(" ", "_") for action in slot] for slot in actions]
         return actions, actions_map, action_features
 
     def _call(
