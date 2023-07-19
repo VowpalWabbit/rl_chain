@@ -17,6 +17,7 @@ import slates
 
 from pydantic import Extra, PrivateAttr
 import numpy as np
+import pandas as pd
 
 from langchain.base_language import BaseLanguageModel
 from langchain.callbacks.manager import CallbackManagerForChainRun
@@ -66,7 +67,6 @@ class PersonalizerChain(Chain):
     context: str = "context"  #: :meta private:
     output_key: str = "result"  #: :meta private:
     prompt: Optional[PromptTemplate]
-    reward: List[float] = []
 
     class Type(Enum):
         """
@@ -95,7 +95,6 @@ class PersonalizerChain(Chain):
     ):
         super().__init__(*args, **kwargs)
         self.vw_logger = VwLogger(vw_logs)
-        self.reward = []
         next_checkpoint = 1
         serialized_workspace = None
 
@@ -373,7 +372,6 @@ class ContextualBanditPersonalizerChain(PersonalizerChain):
                     llm_response=llm_resp[self.output_key],
                     chosen_action=pred_action,
                 )
-                self.reward.append(-cost)
                 latest_cost = cost
                 cb_label = (sampled_action, cost, sampled_prob)
 
@@ -415,7 +413,6 @@ class ContextualBanditPersonalizerChain(PersonalizerChain):
             raise RuntimeError(
                 "check_response is set to True, this must be turned off for explicit feedback and training to be provided, or overriden by calling the method with force_reward=True"
             )
-        self.reward.append(reward)
         cost = -1.0 * reward      
         cb_label = (
             response_result.chosen_action,
@@ -446,6 +443,7 @@ class SlatesPersonalizerChain(PersonalizerChain):
     last_decision: Optional[slates.Decision] = None
     embeddings_model: Optional[SentenceTransformer] = None
     policy: Optional[slates.Policy] = None
+    _reward: List[float] = PrivateAttr(default=[])
 
     def __init__(self, policy = slates.VwPolicy, *args, **kwargs):
         super().__init__(*args, **kwargs)
@@ -495,7 +493,7 @@ class SlatesPersonalizerChain(PersonalizerChain):
                 self.last_decision.label.r = self.response_checker.grade_response(
                     inputs=preds, llm_response=llm_resp[self.output_key]
                 )
-                self.reward.append(self.last_decision.label.r)
+                self._reward.append(self.last_decision.label.r)
                 self._learn(self.last_decision.vwtxt)
 
             except Exception as e:
@@ -508,6 +506,10 @@ class SlatesPersonalizerChain(PersonalizerChain):
 
     def learn_with_specific_cost(self, cost: int, force_cost=False):
         ... # TODO: implement
+
+    @property
+    def reward(self):
+        return pd.DataFrame({'r': self._reward})
 
 # ### TODO:
 # - persist data to log file?
