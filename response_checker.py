@@ -30,7 +30,7 @@ class LLMResponseCheckerForCB(ResponseChecker):
             template = "PLEASE RESPOND ONLY WITH A SIGNLE FLOAT AND NO OTHER TEXT EXPLANATION\n You are a VERY VERY strict judge that is called on to rank a response based on given criteria.\
                 You must respond with your ranking by providing a single float within the range [-1, 1], -1 being very bad response and 1 being very good response."
             system_message_prompt = SystemMessagePromptTemplate.from_template(template)
-            human_template = "Given this context {context} as the most important attribute, rank how good or bad this text selection is: {action}."
+            human_template = "Given this context {context} as the most important attribute, rank how good or bad this text selection is: {selected}."
             human_message_prompt = HumanMessagePromptTemplate.from_template(
                 human_template
             )
@@ -46,12 +46,14 @@ class LLMResponseCheckerForCB(ResponseChecker):
         self, inputs: Dict[str, Any], llm_response: str, **kwargs
     ) -> float:
         
-        if "chosen_action" not in kwargs:
+        if "selected" not in kwargs:
             raise ValueError("The chosen action is not provided to the LLM response Checker, please provide the chosen action")
 
-        chosen_action = kwargs["chosen_action"]
+        selected = kwargs["selected"]
         
-        ranking = self.llm_chain.predict(**inputs, action=chosen_action)
+        inputs["llm_response"] = llm_response
+        inputs["selected"] = selected
+        ranking = self.llm_chain.predict(**inputs)
         ranking = ranking.strip()
         try:
             resp = float(ranking)
