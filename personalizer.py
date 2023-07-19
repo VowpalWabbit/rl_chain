@@ -13,6 +13,7 @@ from response_checker import ResponseChecker, LLMResponseCheckerForCB
 from vw_logger import VwLogger
 from vw_example_builder import ContextualBanditTextEmbedder, Embedder
 from langchain.prompts.prompt import PromptTemplate
+import slates
 
 from pydantic import Extra, PrivateAttr
 import numpy as np
@@ -439,49 +440,16 @@ def Embed(anything):
     return _Embed(anything)
 
 class SlatesPersonalizerChain(PersonalizerChain):
-    class Label:
-        chosen: List[int]
-        p: List[float]
-        r: Optional[float]
-
-        def __init__(self, vwpred: List[List[Tuple[int, float]]], r: Optional[float] = None):
-            self.chosen = [p[0][0] for p in vwpred]
-            self.p = [p[0][1] for p in vwpred]
-            self.r = r
-
-        def ap(self):
-            return zip(self.chosen, self.p)
-
-    class Decision:
-        actions: List[List[str]]
-        label: Optional[SlatesPersonalizerChain.Label]
-
-        def __init__(self, actions, label=None):
-            self.actions = actions
-            self.label = label
-
-        @property
-        def vwtxt(self):
-            context = [f'slates shared {-self.label.r if self.label else ""} |']
-            actions = chain.from_iterable([[
-                f'slates action {i} |Action {action}'] 
-                for i, slot in enumerate(self.actions) for action in slot])
-            ps = [f'{a}:{p}' for a, p in self.label.ap()] if self.label else [''] * len(self.actions)
-            slots = [f'slates slot {p} |' for p in ps]
-            return '\n'.join(list(chain.from_iterable([context, actions, slots]))) # TODO: remove
-
-    last_decision: Optional[Decision] = None
-
-    action_embeddings: List[List[str]] = []
-    actions: List[List[str]] = []
-    actions_map: List[str] = []
+    last_decision: Optional[slates.Decision] = None
     embeddings_model: Optional[SentenceTransformer] = None
+    policy: Optional[SlatesPolicy] = None
 
-    def __init__(self, *args, **kwargs):
+    def __init__(self, policy = slates.VwPolicy, *args, **kwargs):
         super().__init__(*args, **kwargs)
         self.embeddings_model = SentenceTransformer("bert-base-nli-mean-tokens")
+        self.policy = policy(self.workspace)
 
-    def set_actions(self, actions: Dict[str, List[str]]):
+    def _featurize(self, raw_actions: Dict[str, List[str]]):
         """
         At any time new actions can be set by this function call
 
@@ -489,36 +457,32 @@ class SlatesPersonalizerChain(PersonalizerChain):
             actions: a list of list strings containing the actions that will be transformed to embeddings using the FeatureEmbeddings
         """
         # Build action embeddings
-        self.actions = []
-        self.actions_map = []
-        for (i, (k, v)) in enumerate((actions.items())):
-            self.actions.append(v)
-            self.actions_map.append(k)
+        actions = []
+        actions_map = []
+        for (k, v) in raw_actions.items():
+            actions.append(v)
+            actions_map.append(k)
             
         def _str(embedding):
             return ' '.join([f'{i}:{e}' for i, e in enumerate(embedding)])
         
-        self.action_embeddings = [
-            [_str(self.embeddings_model.encode(action.impl)) if isinstance(action, _Embed) else action for action in slot] for slot in self.actions]
+        action_features = [
+            [_str(self.embeddings_model.encode(action.impl)) if isinstance(action, _Embed) else action for action in slot] for slot in actions]
+        return actions, actions_map, action_features
 
     def _call(
         self,
         inputs: Dict[str, Any],
         run_manager: Optional[CallbackManagerForChainRun] = None,
     ) -> Dict[str, str]:
-        self.set_actions({k: inputs[k] if isinstance(inputs[k], list) else [inputs[k]] for k in self.llm_chain.prompt.input_variables})
-        _run_manager = run_manager or CallbackManagerForChainRun.get_noop_manager()
-        text_parser = vw.TextFormatParser(self.workspace)
-        context = inputs[self.context]
+        named_actions = {k: inputs[k] if isinstance(inputs[k], list) else [inputs[k]] for k in self.llm_chain.prompt.input_variables}
+        actions, actions_map, action_features = self._featurize(named_actions)        
+        self.last_decision = slates.Decision(action_features)
+        self.last_decision.label = self.policy.predict(self.last_decision)
 
-        self.last_decision = self.Decision(
-            self.action_embeddings)
-
-        self.last_decision.label = self.Label(
-            self.workspace.predict_one(parse_lines(text_parser, self.last_decision.vwtxt)))
         preds = {}
-        for i, (j, actions) in enumerate(zip(self.last_decision.label.chosen, self.actions)):
-            preds[self.actions_map[i]] = str(actions[j]) 
+        for i, (j, a) in enumerate(zip(self.last_decision.label.chosen, actions)):
+            preds[actions_map[i]] = str(a[j]) 
         llm_resp = super()._call(
             run_manager=run_manager, inputs=preds, preds={}
         )
