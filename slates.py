@@ -49,7 +49,7 @@ class Policy(ABC):
         ...
 
 
-class VwPolicy:
+class VwPolicy(Policy):
     def __init__(self, workspace: vw.Workspace, *_, **__):
         self.workspace = workspace
     
@@ -58,7 +58,7 @@ class VwPolicy:
         return Label(self.workspace.predict_one(parse_lines(text_parser, decision.vwtxt)))
 
 
-class RandomPolicy:
+class RandomPolicy(Policy):
     def __init__(self, *_, **__):
         ...
 
@@ -66,7 +66,7 @@ class RandomPolicy:
         return Label([[(random.randint(0, len(slot) - 1), 1.0 / len(slot))] for slot in decision.actions])
 
 
-class FirstChoicePolicy:
+class FirstChoicePolicy(Policy):
     def __init__(self, *_, **__):
         ...
 

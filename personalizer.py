@@ -445,7 +445,7 @@ def Embed(anything):
 class SlatesPersonalizerChain(PersonalizerChain):
     last_decision: Optional[slates.Decision] = None
     embeddings_model: Optional[SentenceTransformer] = None
-    policy: Optional[SlatesPolicy] = None
+    policy: Optional[slates.Policy] = None
 
     def __init__(self, policy = slates.VwPolicy, *args, **kwargs):
         super().__init__(*args, **kwargs)
