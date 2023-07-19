@@ -5,7 +5,7 @@ import logging
 import glob
 import re
 import os
-from typing import Any, Dict, List, Optional, Tuple
+from typing import Any, Dict, List, Optional, Tuple, Union
 
 import vowpal_wabbit_next as vw
 from personalizer_prompt import PROMPT
@@ -489,6 +489,8 @@ class SlatesPersonalizerChain(PersonalizerChain):
             actions: a list of list strings containing the actions that will be transformed to embeddings using the FeatureEmbeddings
         """
         # Build action embeddings
+        self.actions = []
+        self.actions_map = []
         for (i, (k, v)) in enumerate((actions.items())):
             self.actions.append(v)
             self.actions_map.append(k)
