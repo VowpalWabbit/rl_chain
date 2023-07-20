@@ -1,4 +1,4 @@
-from response_validator import ResponseValidator
+from rl_chain import ResponseValidator
 from typing import Dict, Any
 
 class MockValidator(ResponseValidator):

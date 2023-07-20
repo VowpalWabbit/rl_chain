@@ -1,8 +1,8 @@
 from __future__ import annotations
 
-from typing import Any, Dict, List, Optional, Tuple, Union
+from typing import Any, Dict, List, Optional
 
-from personalizer_prompt import PROMPT
+from rl_chain.pick_best_prompt import PROMPT
 from langchain.prompts.prompt import PromptTemplate
 
 from pydantic import Extra, PrivateAttr
