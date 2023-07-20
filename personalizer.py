@@ -450,6 +450,14 @@ class SlatesPersonalizerChain(PersonalizerChain):
         self.embeddings_model = SentenceTransformer("bert-base-nli-mean-tokens")
         self.policy = policy(self.workspace)
 
+    @property
+    def input_keys(self) -> List[str]:
+        """Expect input key.
+
+        :meta private:
+        """
+        return []
+
     def _featurize(self, raw_actions: Dict[str, List[str]]):
         """
         At any time new actions can be set by this function call
