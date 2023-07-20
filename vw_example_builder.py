@@ -140,3 +140,40 @@ class ContextualBanditTextEmbedder(Embedder):
             example_string += "\n"
         # Strip the last newline
         return example_string[:-1]
+
+class GraphFeedbackTextEmbedder(ContextualBanditTextEmbedder):
+    def to_vw_format(self, **kwargs):
+        if "cb_label" in kwargs:
+            chosen_action, cost, prob = kwargs["cb_label"]
+        
+        inputs = kwargs.get('inputs', {})
+        context = inputs.get('context')
+        actions = inputs.get('actions')
+        graph = inputs.get('graph')
+
+        context_emb = self.embed_context(context) if context else None
+        action_embs = self.embed_actions(actions) if actions else None
+
+        if not context_emb or not action_embs:
+            raise ValueError("Context and actions must be provided in the inputs dictionary")
+
+        example_string = ""
+        example_string += f"shared graph {graph}"
+        # example_string += f"shared "
+        for ns, context in context_emb.items():
+            example_string += f"|{ns} {context} "
+        example_string += "\n"
+
+        for i, action in enumerate(action_embs):
+            # if "cb_label" in kwargs and chosen_action == i:
+            #     example_string += f"{chosen_action}:{cost}:{prob} "
+            if "cb_label" in kwargs:
+                if chosen_action == i:
+                    example_string += f"{chosen_action}:{cost}:{1} "
+                elif chosen_action == 1:
+                    example_string += f"{chosen_action}:{cost}:{1} "
+            for ns, action_embedding in action.items():
+                example_string += f"|{ns} {action_embedding} "
+            example_string += "\n"
+        # Strip the last newline
+        return example_string[:-1]

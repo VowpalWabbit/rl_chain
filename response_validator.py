@@ -9,7 +9,7 @@ from langchain.prompts import (
 )
 
 
-class ResponseChecker(ABC):
+class ResponseValidator(ABC):
     """Abstract method to grade the chosen action or the response of the llm"""
 
     @abstractmethod
@@ -19,7 +19,7 @@ class ResponseChecker(ABC):
         pass
 
 
-class LLMResponseCheckerForCB(ResponseChecker):
+class AutoValidatePickOne(ResponseValidator):
     llm_chain: LLMChain
     prompt: PromptTemplate
 
@@ -27,7 +27,7 @@ class LLMResponseCheckerForCB(ResponseChecker):
         if prompt:
             self.prompt = prompt
         else:
-            template = "PLEASE RESPOND ONLY WITH A SIGNLE FLOAT AND NO OTHER TEXT EXPLANATION\n You are a VERY VERY strict judge that is called on to rank a response based on given criteria.\
+            template = "PLEASE RESPOND ONLY WITH A SIGNLE FLOAT AND NO OTHER TEXT EXPLANATION\n You are a strict judge that is called on to rank a response based on given criteria.\
                 You must respond with your ranking by providing a single float within the range [-1, 1], -1 being very bad response and 1 being very good response."
             system_message_prompt = SystemMessagePromptTemplate.from_template(template)
             human_template = "Given this context {context} as the most important attribute, rank how good or bad this text selection is: {selected}."
@@ -42,17 +42,9 @@ class LLMResponseCheckerForCB(ResponseChecker):
 
         self.llm_chain = LLMChain(llm=llm, prompt=self.prompt)
 
-    def grade_response(
-        self, inputs: Dict[str, Any], llm_response: str, **kwargs
-    ) -> float:
-        
-        if "selected" not in kwargs:
-            raise ValueError("The chosen action is not provided to the LLM response Checker, please provide the chosen action")
-
-        selected = kwargs["selected"]
-        
+    def grade_response(self, inputs: Dict[str, Any], llm_response: str, **kwargs) -> float:
         inputs["llm_response"] = llm_response
-        inputs["selected"] = selected
+        inputs["selected"] = inputs["selected"]
         ranking = self.llm_chain.predict(**inputs)
         ranking = ranking.strip()
         try:
@@ -64,7 +56,7 @@ class LLMResponseCheckerForCB(ResponseChecker):
             )
 
 
-class LLMResponseCheckerForSlates(ResponseChecker):
+class LLMResponseValidatorForSlates(ResponseValidator):
     llm_chain: LLMChain
     prompt: PromptTemplate
     default_system_prompt = SystemMessagePromptTemplate.from_template(
@@ -82,7 +74,7 @@ class LLMResponseCheckerForSlates(ResponseChecker):
             )
 
             chat_prompt = ChatPromptTemplate.from_messages(
-                [LLMResponseCheckerForSlates.default_system_prompt, human_message_prompt]
+                [LLMResponseValidatorForSlates.default_system_prompt, human_message_prompt]
             )
             self.prompt = chat_prompt
 

@@ -8,7 +8,7 @@ from typing import Any, Dict, List, Optional, Tuple, Union
 
 import vowpal_wabbit_next as vw
 from personalizer_prompt import PROMPT
-from response_checker import ResponseChecker, LLMResponseCheckerForCB
+from response_validator import ResponseValidator, AutoValidatePickOne
 from vw_logger import VwLogger
 from vw_example_builder import ContextualBanditTextEmbedder, Embedder
 from langchain.prompts.prompt import PromptTemplate
@@ -38,18 +38,16 @@ logger.addHandler(ch)
 def parse_lines(parser: vw.TextFormatParser, input_str: str) -> List[vw.Example]:
     return [parser.parse_line(line) for line in input_str.split("\n")]
 
-
-class PersonalizerChain(Chain):
+class RLChain(Chain):
     """
-    PersonalizerChain class that utilizes the Vowpal Wabbit (VW) model for personalization.
+    RLChain class that utilizes the Vowpal Wabbit (VW) model for personalization.
 
     Attributes:
-        vw_workspace_type (Type): The type of personalization algorithm to be used by the VW model.
         model_loading (bool, optional): If set to True, the chain will attempt to load an existing VW model from the latest checkpoint file in the {model_save_dir} directory (current directory if none specified). If set to False, it will start training from scratch, potentially overwriting existing files. Defaults to True.
         large_action_spaces (bool, optional): If set to True and vw_cmd has not been specified in the constructor, it will enable large action spaces
         vw_cmd (List[str], optional): Advanced users can set the VW command line to whatever they want, as long as it is compatible with the Type that is specified (Type Enum)
         model_save_dir (str, optional): The directory to save the VW model to. Defaults to the current directory.
-        response_checker (ResponseChecker, optional): If set, the chain will check the response using the provided response_checker and the VW model will be updated with the result. Defaults to None.
+        response_validator (ResponseValidator, optional): If set, the chain will check the response using the provided response_validator and the VW model will be updated with the result. Defaults to None.
 
     Notes:
         The class creates a VW model instance using the provided arguments. Before the chain object is destroyed the save_progress() function can be called. If it is called, the learned VW model is saved to a file in the current directory named `model-<checkpoint>.vw`. Checkpoints start at 1 and increment monotonically.
@@ -60,32 +58,16 @@ class PersonalizerChain(Chain):
     workspace: Optional[vw.Workspace] = None
     next_checkpoint: int = 1
     model_save_dir: str = "./"
-    response_checker: Optional[ResponseChecker] = None
+    response_validator: Optional[ResponseValidator] = None
     vw_logger: VwLogger = None
 
     context: str = "context"  #: :meta private:
     output_key: str = "result"  #: :meta private:
     prompt: PromptTemplate
 
-    class Type(Enum):
-        """
-        Enumeration to define the type of personalization algorithm to be used in the VW model.
-
-        Attributes:
-            CONTEXTUAL_BANDITS (tuple): Indicates the use of the Contextual Bandits algorithm.
-            CONDITIONAL_CONTEXTUAL_BANDITS (tuple): Indicates the use of the Conditional Contextual Bandits algorithm.
-            SLATES (tuple): Indicates Slates optimization algorithm
-        """
-
-        CONTEXTUAL_BANDITS = (1,)
-        CONDITIONAL_CONTEXTUAL_BANDITS = (2,)
-        SLATES = (3,)
-
     def __init__(
         self,
-        vw_workspace_type: Type,
         model_loading=True,
-        large_action_spaces=False,
         vw_cmd=[],
         vw_logs: Optional[Union[str, os.PathLike]] = None,
         *args,
@@ -119,38 +101,6 @@ class PersonalizerChain(Chain):
 
         self.next_checkpoint = next_checkpoint
         logger.info(f"next model checkpoint = {self.next_checkpoint}")
-
-        las_cmd = []
-        if large_action_spaces and not vw_cmd:
-            las_cmd = ["--large_action_space"]
-
-        if vw_workspace_type == PersonalizerChain.Type.CONTEXTUAL_BANDITS:
-            if not vw_cmd:
-                vw_cmd = las_cmd + [
-                    "--cb_explore_adf",
-                    "--quiet",
-                    "--interactions=::",
-                    "--coin",
-                    "--squarecb",
-                ]
-            else:
-                if "--cb_explore_adf" not in vw_cmd:
-                    raise ValueError(
-                        "If vw_cmd is specified, it must include --cb_explore_adf"
-                    )
-        elif vw_workspace_type == PersonalizerChain.Type.CONDITIONAL_CONTEXTUAL_BANDITS:
-            raise ValueError("Coming soon, not currently supported")
-        elif vw_workspace_type == PersonalizerChain.Type.SLATES:
-            if not vw_cmd:
-                vw_cmd = las_cmd + [
-                    "--slates",
-                    "--quiet",
-                    "--interactions=AC",
-                    "--coin",
-                    "--squarecb",
-                ]
-        else:
-            raise ValueError("No other vw types supported yet")
 
         logger.info(f"vw command: {vw_cmd}")
         # initialize things
@@ -203,7 +153,7 @@ class PersonalizerChain(Chain):
         _run_manager.on_text(output, color="yellow", verbose=self.verbose)
         return {self.output_key: output}
 
-    def save_progress(self):
+    def save_progress(self) -> None:
         """
         This function should be called whenever there is a need to save the progress of the VW (Vowpal Wabbit) model within the chain. It saves the current state of the VW model to a file.
 
@@ -227,31 +177,6 @@ class PersonalizerChain(Chain):
     def _chain_type(self) -> str:
         return "llm_personalizer_chain"
 
-    @classmethod
-    def from_chain(
-        cls, llm_chain: Chain, prompt: PromptTemplate = PROMPT, **kwargs: Any
-    ) -> Union[ContextualBanditPersonalizerChain, SlatesPersonalizerChain]:
-        if "vw_workspace_type" not in kwargs:
-            raise ValueError("vw_workspace_type must be specified")
-        if kwargs.get("vw_workspace_type") is PersonalizerChain.Type.CONTEXTUAL_BANDITS:
-            return ContextualBanditPersonalizerChain(
-                llm_chain=llm_chain, prompt=prompt, **kwargs
-            )
-        elif kwargs.get("vw_workspace_type") is PersonalizerChain.Type.SLATES:
-            return SlatesPersonalizerChain(
-                llm_chain=llm_chain, prompt=prompt, **kwargs
-            )
-        else:
-            raise ValueError("Type not supported")
-
-    @classmethod
-    def from_llm(
-        cls, llm: BaseLanguageModel, prompt: PromptTemplate = PROMPT, **kwargs: Any
-    ) -> Union[ContextualBanditPersonalizerChain, SlatesPersonalizerChain]:
-        llm_chain = LLMChain(llm=llm, prompt=prompt)
-        return PersonalizerChain.from_chain(llm_chain=llm_chain, prompt=prompt, **kwargs)
-
-
     def _learn(self, vw_ex):
         self.vw_logger.log(vw_ex)
         text_parser = vw.TextFormatParser(self.workspace)
@@ -259,9 +184,9 @@ class PersonalizerChain(Chain):
         self.workspace.learn_one(multi_ex)
 
 
-class ContextualBanditPersonalizerChain(PersonalizerChain):
+class PickBest(RLChain):
     """
-    ContextualBanditPersonalizerChain class that utilizes the Vowpal Wabbit (VW) model for personalization.
+    PickBest class that utilizes the Vowpal Wabbit (VW) model for personalization.
 
     The Chain is initialized with a set of potential actions. For each call to the Chain, a specific action will be chosen based on an input context.
     This chosen action is then passed to the prompt that will be utilized in the subsequent call to the LLM (Language Model).
@@ -272,7 +197,7 @@ class ContextualBanditPersonalizerChain(PersonalizerChain):
     - Chain chooses an action based on the context
     - Chain calls the LLM with the chosen action
     - LLM returns a response
-    - If the response_checker is specified, the response is checked against the response_checker
+    - If the response_validator is specified, the response is checked against the response_validator
     - The internal model will be updated with the context, action, and reward of the response (how good or bad the response was)
     - The response is returned
 
@@ -282,7 +207,7 @@ class ContextualBanditPersonalizerChain(PersonalizerChain):
                 - Actions provided as a list of strings e.g. actions = ["action1", "action2", "action3"]
                 - If actions are provided as a list of dictionaries, each action should be a dictionary where the keys are namespace names and the values are the corresponding action strings e.g. actions = [{"namespace1": "action1", "namespace2": "action2"}, {"namespace1": "action3", "namespace2": "action4"}]    
     Extends:
-        PersonalizerChain
+        RLChain
 
     Attributes:
         text_embedder: (ContextualBanditTextEmbedder, optional) The text embedder to use for embedding the context and the actions. If not provided, a default embedder is used.
@@ -308,6 +233,23 @@ class ContextualBanditPersonalizerChain(PersonalizerChain):
     actions: str = "actions"  #: :meta private:
 
     def __init__(self, *args, **kwargs):
+        vw_cmd = kwargs.get("vw_cmd", [])
+        if not vw_cmd:
+            vw_cmd = [
+                "--cb_explore_adf",
+                "--quiet",
+                "--interactions=::",
+                "--coin",
+                "--epsilon=0.2",
+            ]
+        else:
+            if "--cb_explore_adf" not in vw_cmd:
+                raise ValueError(
+                    "If vw_cmd is specified, it must include --cb_explore_adf"
+                )
+        
+        kwargs["vw_cmd"] = vw_cmd
+
         super().__init__(*args, **kwargs)
     
     @property
@@ -333,8 +275,8 @@ class ContextualBanditPersonalizerChain(PersonalizerChain):
         Returns:
             A dictionary containing:
                 - `response`: The response generated by the LLM (Language Model).
-                - `response_result`: A ResponseResult object containing all the information needed to learn the reward for the chosen action at a later point. If an automatic response_checker is not provided, then this object can be used at a later point with the `learn_delayed_reward()` function to learn the delayed reward and update the Vowpal Wabbit model.
-                    - the `cost` in the `response_result` object is set to None if an automatic response_checker is not provided or if the response_checker failed (e.g. LLM timeout or LLM failed to rank correctly).
+                - `response_result`: A ResponseResult object containing all the information needed to learn the reward for the chosen action at a later point. If an automatic response_validator is not provided, then this object can be used at a later point with the `learn_delayed_reward()` function to learn the delayed reward and update the Vowpal Wabbit model.
+                    - the `cost` in the `response_result` object is set to None if an automatic response_validator is not provided or if the response_validator failed (e.g. LLM timeout or LLM failed to rank correctly).
         """
         _run_manager = run_manager or CallbackManagerForChainRun.get_noop_manager()
 
@@ -365,13 +307,11 @@ class ContextualBanditPersonalizerChain(PersonalizerChain):
 
         latest_cost = None
 
-        if self.response_checker:
+        if self.response_validator:
             try:
-                cost = -1.0 * self.response_checker.grade_response(
+                cost = -1.0 * self.response_validator.grade_response(
                     inputs=inputs,
-                    llm_response=llm_resp[self.output_key],
-                    selected=pred_action,
-                )
+                    llm_response=llm_resp[self.output_key]                )
                 latest_cost = cost
                 cb_label = (sampled_action, cost, sampled_prob)
 
@@ -386,7 +326,7 @@ class ContextualBanditPersonalizerChain(PersonalizerChain):
                     f"The LLM was not able to rank and the chain was not able to adjust to this response. Error: {e}"
                 )
 
-        self.latest_response = ContextualBanditPersonalizerChain.ResponseResult(
+        self.latest_response = PickBest.ResponseResult(
             chosen_action=sampled_action,
             chosen_action_probability=sampled_prob,
             inputs=inputs,
@@ -400,16 +340,35 @@ class ContextualBanditPersonalizerChain(PersonalizerChain):
 
         return llm_resp
 
+    @property
+    def _chain_type(self) -> str:
+        return "llm_personalizer_chain"
+
+    @classmethod
+    def from_chain(
+        cls, llm_chain: Chain, prompt: PromptTemplate = PROMPT, **kwargs: Any
+    ) -> PickBest:
+        return PickBest(
+            llm_chain=llm_chain, prompt=prompt, **kwargs
+        )
+
+    @classmethod
+    def from_llm(
+        cls, llm: BaseLanguageModel, prompt: PromptTemplate = PROMPT, **kwargs: Any
+    ) -> PickBest:
+        llm_chain = LLMChain(llm=llm, prompt=prompt)
+        return PickBest.from_chain(llm_chain=llm_chain, prompt=prompt, **kwargs)
+
     def learn_delayed_reward(
         self, reward: float, response_result: ResponseResult, force_reward=False
-    ):
+    ) -> None:
         """
         Learn will be called with the reward specified and the actions/embeddings/etc stored in response_result
 
         Will raise an error if check_response is set to True and force_reward=True was not provided during the method call
         force_cost should be used if the check_response failed to check the response correctly
         """
-        if self.response_checker and not force_reward:
+        if self.response_validator and not force_reward:
             raise RuntimeError(
                 "check_response is set to True, this must be turned off for explicit feedback and training to be provided, or overriden by calling the method with force_reward=True"
             )
@@ -439,13 +398,30 @@ def Embed(anything):
         return [_Embed(v) for v in anything]
     return _Embed(anything)
 
-class SlatesPersonalizerChain(PersonalizerChain):
+class SlatesPersonalizerChain(RLChain):
     last_decision: Optional[slates.Decision] = None
     embeddings_model: Optional[SentenceTransformer] = None
     policy: Optional[slates.Policy] = None
     _reward: List[float] = PrivateAttr(default=[])
 
     def __init__(self, policy = slates.VwPolicy, *args, **kwargs):
+        vw_cmd = kwargs.get("vw_cmd", [])
+        if not vw_cmd:
+            vw_cmd = [
+                "--slates",
+                "--quiet",
+                "--interactions=AC",
+                "--coin",
+                "--squarecb",
+            ]
+        else:
+            if "--slates" not in vw_cmd:
+                raise ValueError(
+                    "If vw_cmd is specified, it must include --slates"
+                )
+
+        kwargs["vw_cmd"] = vw_cmd
+
         super().__init__(*args, **kwargs)
         self.embeddings_model = SentenceTransformer("bert-base-nli-mean-tokens")
         self.policy = policy(self.workspace)
@@ -494,9 +470,9 @@ class SlatesPersonalizerChain(PersonalizerChain):
             preds[actions_map[i]] = str(a[j]) 
         llm_resp = super()._call(run_manager=run_manager, inputs=preds)
 
-        if self.response_checker:
+        if self.response_validator:
             try:
-                self.last_decision.label.r = self.response_checker.grade_response(
+                self.last_decision.label.r = self.response_validator.grade_response(
                     inputs=preds, llm_response=llm_resp[self.output_key]
                 )
                 self._reward.append(self.last_decision.label.r)
@@ -517,9 +493,28 @@ class SlatesPersonalizerChain(PersonalizerChain):
     def reward(self):
         return pd.DataFrame({'r': self._reward})
 
+    @property
+    def _chain_type(self) -> str:
+        return "llm_personalizer_chain"
+
+    @classmethod
+    def from_chain(
+        cls, llm_chain: Chain, prompt: PromptTemplate = PROMPT, **kwargs: Any
+    ) -> SlatesPersonalizerChain:
+        return SlatesPersonalizerChain(
+            llm_chain=llm_chain, prompt=prompt, **kwargs
+        )
+
+    @classmethod
+    def from_llm(
+        cls, llm: BaseLanguageModel, prompt: PromptTemplate = PROMPT, **kwargs: Any
+    ) -> SlatesPersonalizerChain:
+        llm_chain = LLMChain(llm=llm, prompt=prompt)
+        return SlatesPersonalizerChain.from_chain(llm_chain=llm_chain, prompt=prompt, **kwargs)
+
 # ### TODO:
 # - persist data to log file?
 # - fix save_progress to not override existing file
-# - Naming: is LLMResponseChecker a good enough name?, Personalizer? CB how should they be named for a good API?
+# - Naming: is LLMResponseValidator a good enough name?, Personalizer? CB how should they be named for a good API?
 # - Good documentation: check langchain requirements we are adding explanations on the functions as we go
 # - be able to specify vw model file name
