@@ -1,7 +1,7 @@
-from response_checker import ResponseChecker
+from response_validator import ResponseValidator
 from typing import Dict, Any
 
-class MockChecker(ResponseChecker):
+class MockValidator(ResponseValidator):
     def __init__(self):
         ...
 
