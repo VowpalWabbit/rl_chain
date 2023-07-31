@@ -1,14 +1,19 @@
-from .rl_chain_base import *
+from . import rl_chain_base as base
 from langchain.prompts import (
     ChatPromptTemplate,
     SystemMessagePromptTemplate,
     HumanMessagePromptTemplate,
 )
+from langchain.prompts.prompt import PromptTemplate
+
+from langchain.callbacks.manager import CallbackManagerForChainRun
+from langchain.chains.base import Chain
+from pydantic import Extra, PrivateAttr
 
 import pandas as pd
 import vowpal_wabbit_next as vw
 from abc import ABC, abstractmethod
-from typing import List, Optional, Tuple, Dict
+from typing import Any, Dict, List, Optional, Tuple, Union
 from itertools import chain
 import random
 
@@ -16,11 +21,6 @@ import random
 from langchain.base_language import BaseLanguageModel
 from langchain.chains.llm import LLMChain
 from sentence_transformers import SentenceTransformer
-
-#TODO: remove copy-paste
-def parse_lines(parser: vw.TextFormatParser, input_str: str) -> List[vw.Example]:
-    return [parser.parse_line(line) for line in input_str.split("\n")]
-
 
 class Label:
     chosen: List[int]
@@ -67,7 +67,7 @@ class VwPolicy(Policy):
     
     def predict(self, decision: Decision) -> Label:
         text_parser = vw.TextFormatParser(self.workspace)
-        return Label(self.workspace.predict_one(parse_lines(text_parser, decision.vwtxt)))
+        return Label(self.workspace.predict_one(base.parse_lines(text_parser, decision.vwtxt)))
 
 
 class RandomPolicy(Policy):
@@ -85,19 +85,7 @@ class FirstChoicePolicy(Policy):
     def predict(self, decision: Decision) -> Label:
         return Label([[(0, 1)] for slot in decision.actions])
 
-class _Embed:
-    def __init__(self, impl):
-        self.impl = impl
-
-    def __str__(self):
-        return self.impl
-
-def Embed(anything):
-    if isinstance(anything, list):
-        return [_Embed(v) for v in anything]
-    return _Embed(anything)
-
-class LLMResponseValidatorForSlates(ResponseValidator):
+class LLMResponseValidatorForSlates(base.ResponseValidator):
     llm_chain: LLMChain
     prompt: PromptTemplate
     default_system_prompt = SystemMessagePromptTemplate.from_template(
@@ -138,7 +126,7 @@ class LLMResponseValidatorForSlates(ResponseValidator):
                 "The llm did not manage to rank the response as expected, there is always the option to try again"
             )
 
-class SlatesPersonalizerChain(RLChain):
+class SlatesPersonalizerChain(base.RLChain):
     last_decision: Optional[Decision] = None
     embeddings_model: Optional[SentenceTransformer] = None
     policy: Optional[Policy] = None
@@ -192,7 +180,7 @@ class SlatesPersonalizerChain(RLChain):
             return ' '.join([f'{i}:{e}' for i, e in enumerate(embedding)])
         
         action_features = [
-            [_str(self.embeddings_model.encode(action.impl)) if isinstance(action, _Embed) else action.replace(" ", "_") for action in slot] for slot in actions]
+            [_str(self.embeddings_model.encode(action.impl)) if isinstance(action, base._Embed) else action.replace(" ", "_") for action in slot] for slot in actions]
         return actions, actions_map, action_features
 
     def _call(
@@ -220,7 +208,7 @@ class SlatesPersonalizerChain(RLChain):
 
             except Exception as e:
                 print(f"this is the error: {e}")
-                logger.info(
+                base.logger.info(
                     "The LLM was not able to rank and the chain was not able to adjust to this response"
                 )
 
@@ -247,3 +235,4 @@ class SlatesPersonalizerChain(RLChain):
     def from_llm(cls, llm: BaseLanguageModel, prompt: PromptTemplate, **kwargs: Any):
         llm_chain = LLMChain(llm=llm, prompt=prompt)
         return SlatesPersonalizerChain.from_chain(llm_chain=llm_chain, prompt=prompt, **kwargs)
+

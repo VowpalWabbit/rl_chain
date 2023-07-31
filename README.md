@@ -4,7 +4,7 @@ Install `requirements.txt`
 
 [VowpalWabbit](https://github.com/VowpalWabbit/vowpal_wabbit)
 
-There is an example notebook with basic usage of the chain.
+There is an example notebook (rl_chain.ipynb) with basic usage of the chain.
 
 TLDR:
 

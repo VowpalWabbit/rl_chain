@@ -24,8 +24,34 @@ ch.setFormatter(formatter)
 ch.setLevel(logging.INFO)
 logger.addHandler(ch)
 
+class _Embed:
+    def __init__(self, impl):
+        self.impl = impl
+
+    def __str__(self):
+        return self.impl
+
+def Embed(anything):
+    if isinstance(anything, list):
+        return [_Embed(v) for v in anything]
+    return _Embed(anything)
+
 def parse_lines(parser: vw.TextFormatParser, input_str: str) -> List[vw.Example]:
     return [parser.parse_line(line) for line in input_str.split("\n")]
+
+class Embedder(ABC):
+    @abstractmethod
+    def to_vw_format(self, **kwargs) -> str:
+        pass
+
+class ResponseValidator(ABC):
+    """Abstract method to grade the chosen action or the response of the llm"""
+
+    @abstractmethod
+    def grade_response(
+        self, inputs: Dict[str, Any], llm_response: str, **kwargs
+    ) -> float:
+        pass
 
 class RLChain(Chain):
     """
@@ -225,18 +251,3 @@ def embed(
             ]
     else:
         raise ValueError("Invalid input format for embedding")
-
-
-class Embedder(ABC):
-    @abstractmethod
-    def to_vw_format(self, **kwargs) -> str:
-        pass
-
-class ResponseValidator(ABC):
-    """Abstract method to grade the chosen action or the response of the llm"""
-
-    @abstractmethod
-    def grade_response(
-        self, inputs: Dict[str, Any], llm_response: str, **kwargs
-    ) -> float:
-        pass
