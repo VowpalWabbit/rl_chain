@@ -95,7 +95,7 @@ class ContextualBanditTextEmbedder(base.Embedder):
         # Strip the last newline
         return example_string[:-1]
 
-class AutoValidateBickBest(base.ResponseValidator):
+class AutoValidatePickBest(base.ResponseValidator):
     llm_chain: LLMChain
     prompt: PromptTemplate
 
