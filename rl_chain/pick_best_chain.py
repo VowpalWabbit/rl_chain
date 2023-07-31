@@ -1,4 +1,4 @@
-from .rl_chain_base import *
+from . import rl_chain_base as base 
 
 from langchain.prompts import (
     ChatPromptTemplate,
@@ -6,13 +6,20 @@ from langchain.prompts import (
     HumanMessagePromptTemplate,
 )
 
+from langchain.prompts.prompt import PromptTemplate
+
+from langchain.callbacks.manager import CallbackManagerForChainRun
+from langchain.chains.base import Chain
+import vowpal_wabbit_next as vw
+from typing import Any, Dict, List, Optional, Tuple, Union
+
 from .pick_best_prompt import PROMPT
 import numpy as np
 from langchain.base_language import BaseLanguageModel
 from langchain.chains.llm import LLMChain
 from sentence_transformers import SentenceTransformer
 
-class ContextualBanditTextEmbedder(Embedder):
+class ContextualBanditTextEmbedder(base.Embedder):
     """
     Contextual Bandit Text Embedder class that embeds the context and actions into a format that can be used by VW
     
@@ -35,7 +42,7 @@ class ContextualBanditTextEmbedder(Embedder):
             - If actions are provided as a list of strings (e.g. actions = ["action1", "action2", "action3"]), each action will be assigned to the Vowpal Wabbit namespace, labelled `Actions`.
             - If actions are provided as a list of dictionaries, each action should be a dictionary where the keys are namespace names and the values are the corresponding action strings (e.g. actions = [{"namespace1": "action1", "namespace2": "action2"}, {"namespace1": "action3", "namespace2": "action4"}])
         """
-        return embed(actions, self.model, "Actions")
+        return base.embed(actions, self.model, "Actions")
 
     def embed_context(self, context: Any):
         """
@@ -46,7 +53,7 @@ class ContextualBanditTextEmbedder(Embedder):
             - If context is provided as a string (e.g. "context"), the context will be assigned to the Vowpal Wabbit namespace, labelled `Context`.
             - If context is provided as a dictionary, then it should be a single dictionary where the keys are namespace names and the values are the corresponding strings of the context (e.g. {"namespace1": "part of context", "namespace2": "another part of the context"})
         """
-        return embed(context, self.model, "Context")[0]
+        return base.embed(context, self.model, "Context")[0]
 
     def to_vw_format(self, inputs :Dict[str, Any], cb_label: Optional[Tuple]=None) -> str:
         """
@@ -88,7 +95,7 @@ class ContextualBanditTextEmbedder(Embedder):
         # Strip the last newline
         return example_string[:-1]
 
-class AutoValidatePickOne(ResponseValidator):
+class AutoValidateBickBest(base.ResponseValidator):
     llm_chain: LLMChain
     prompt: PromptTemplate
 
@@ -99,7 +106,7 @@ class AutoValidatePickOne(ResponseValidator):
             template = "PLEASE RESPOND ONLY WITH A SIGNLE FLOAT AND NO OTHER TEXT EXPLANATION\n You are a strict judge that is called on to rank a response based on given criteria.\
                 You must respond with your ranking by providing a single float within the range [-1, 1], -1 being very bad response and 1 being very good response."
             system_message_prompt = SystemMessagePromptTemplate.from_template(template)
-            human_template = "Given this context {context} as the most important attribute, rank how good or bad this text selection is: {selected}."
+            human_template = "Given this context \"{context}\" as the most important attribute, rank how good or bad this text selection is: \"{selected}\"."
             human_message_prompt = HumanMessagePromptTemplate.from_template(
                 human_template
             )
@@ -125,7 +132,7 @@ class AutoValidatePickOne(ResponseValidator):
             )
 
 
-class PickBest(RLChain):
+class PickBest(base.RLChain):
     """
     PickBest class that utilizes the Vowpal Wabbit (VW) model for personalization.
 
@@ -228,7 +235,7 @@ class PickBest(RLChain):
 
         actions = inputs[self.actions]
         vw_ex = self.text_embedder.to_vw_format(inputs=inputs)
-        multi_ex = parse_lines(text_parser, vw_ex)
+        multi_ex = base.parse_lines(text_parser, vw_ex)
         preds: List[Tuple[int, float]] = self.workspace.predict_one(multi_ex)
         prob_sum = sum(prob for _, prob in preds)
         probabilities = [prob / prob_sum for _, prob in preds]
@@ -263,7 +270,7 @@ class PickBest(RLChain):
                 self._learn(vw_ex)
 
             except Exception as e:
-                logger.info(
+                base.logger.info(
                     f"The LLM was not able to rank and the chain was not able to adjust to this response. Error: {e}"
                 )
 
