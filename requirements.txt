@@ -4,3 +4,4 @@ openai
 sentence_transformers
 pandas
 numpy
+matplotlib

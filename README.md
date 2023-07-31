@@ -8,7 +8,7 @@ There is an example notebook with basic usage of the chain.
 
 TLDR:
 
-- Chain is initialized and creates a Vowpal Wabbit instance - only Contextual Bandits are supported for now
+- Chain is initialized and creates a Vowpal Wabbit instance - only Contextual Bandits and Slates are supported for now
 - You can change the arguments at chain creation time
 - There is a default prompt but it can be changed
 - There is a default reward function that gets triggered and triggers learn automatically
