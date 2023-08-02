@@ -201,7 +201,7 @@ class RLChain(Chain):
         self.workspace.learn_one(multi_ex)
 
 
-def embed_string_type(item: Union[str, _Embed], model: Any, default_namespace: Optional[str] = None) -> Dict[str, str]:
+def embed_string_type(item: Union[str, _Embed], model: Any, namespace: Optional[str] = None) -> Dict[str, str]:
     """Helper function to embed a string or an _Embed object."""
     if isinstance(item, _Embed):
         encoded = model.encode(item.impl)
@@ -210,10 +210,10 @@ def embed_string_type(item: Union[str, _Embed], model: Any, default_namespace: O
         encoded = item
         join_char = ""
 
-    if default_namespace is None:
+    if namespace is None:
         raise ValueError("The default namespace must be provided when embedding a string or _Embed object.")
     
-    return {default_namespace: join_char.join(map(str, encoded))}
+    return {namespace: join_char.join(map(str, encoded))}
 
 def embed_dict_type(item: Dict, model: Any) -> Dict[str, str]:
     """Helper function to embed a dictionary item."""
@@ -225,27 +225,27 @@ def embed_dict_type(item: Dict, model: Any) -> Dict[str, str]:
 def embed(
     to_embed: Union[Union(str, _Embed(str)), Dict, List[Union(str, _Embed(str))], List[Dict]],
     model: Any,
-    default_namespace: Optional[str] = None,
+    namespace: Optional[str] = None,
 ) -> List[Dict[str, str]]:
     """
     Embeds the actions or context using the SentenceTransformer model
 
     Attributes:
         to_embed: (Union[Union(str, _Embed(str)), Dict, List[Union(str, _Embed(str))], List[Dict]], required) The text to be embedded, either a string, a list of strings or a dictionary or a list of dictionaries.
-        default_namespace: (str, optional) The default namespace to use when dictionary or list of dictionaries not provided.
+        namespace: (str, optional) The default namespace to use when dictionary or list of dictionaries not provided.
         model: (Any, required) The model to use for embedding
     Returns:
         List[Dict[str, str]]: A list of dictionaries where each dictionary has the namespace as the key and the embedded string as the value
     """
     if (isinstance(to_embed, _Embed) and isinstance(to_embed.impl, str)) or isinstance(to_embed, str):
-        return [embed_string_type(to_embed, model, default_namespace)]
+        return [embed_string_type(to_embed, model, namespace)]
     elif isinstance(to_embed, dict):
         return [embed_dict_type(to_embed, model)]
     elif isinstance(to_embed, list):
         ret_dict = []
         for embed_item in to_embed:
             if isinstance(embed_item, str) or (isinstance(embed_item, _Embed) and isinstance(embed_item.impl, str)):
-                ret_dict.append(embed_string_type(embed_item, model, default_namespace))
+                ret_dict.append(embed_string_type(embed_item, model, namespace))
             else:
                 ret_dict.append(embed_dict_type(embed_item, model))
         return ret_dict
