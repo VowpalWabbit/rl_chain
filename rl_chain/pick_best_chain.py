@@ -53,7 +53,7 @@ class ContextualBanditTextEmbedder(base.Embedder):
             - If context is provided as a string (e.g. "context"), the context will be assigned to the Vowpal Wabbit namespace, labelled `Context`.
             - If context is provided as a dictionary, then it should be a single dictionary where the keys are namespace names and the values are the corresponding strings of the context (e.g. {"namespace1": "part of context", "namespace2": "another part of the context"})
         """
-        return base.embed(context, self.model, "Context")[0]
+        return base.embed(context, self.model, "Context")
 
     def to_vw_format(self, inputs :Dict[str, Any], cb_label: Optional[Tuple]=None) -> str:
         """
@@ -82,8 +82,9 @@ class ContextualBanditTextEmbedder(base.Embedder):
 
         example_string = ""
         example_string += f"shared "
-        for ns, context in context_emb.items():
-            example_string += f"|{ns} {context} "
+        for context_item in context_emb:
+            for ns, context in context_item.items():
+                example_string += f"|{ns} {context} "
         example_string += "\n"
 
         for i, action in enumerate(action_embs):

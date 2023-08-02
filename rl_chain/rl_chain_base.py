@@ -33,7 +33,9 @@ class _Embed:
 
 def Embed(anything):
     if isinstance(anything, list):
-        return [_Embed(v) for v in anything]
+        return [Embed(v) for v in anything]
+    elif isinstance(anything, dict):
+        return {k: _Embed(v) for k, v in anything.items()}
     return _Embed(anything)
 
 def parse_lines(parser: vw.TextFormatParser, input_str: str) -> List[vw.Example]:
@@ -200,7 +202,7 @@ class RLChain(Chain):
 
 
 def embed(
-    to_embed: Union[str, Dict, List[str], List[Dict]],
+    to_embed: Union[Union(str, _Embed(str)), Dict, List[Union(str, _Embed(str))], List[Dict]],
     model: Any,
     default_namespace: Optional[str] = None,
 ) -> List[Dict[str, str]]:
@@ -218,36 +220,35 @@ def embed(
     Returns:
         List[Dict[str, str]]: A list of dictionaries where each dictionary has the namespace as the key and the embedded string as the value
     """
-    if isinstance(to_embed, str):
+    if (isinstance(to_embed, _Embed) and isinstance(to_embed.impl, str)) or isinstance(to_embed, str):
+        join_char = "" if isinstance(to_embed, str) else " "
         if default_namespace is None:
             raise ValueError(
                 "The default namespace must be provided when embedding a string"
             )
-        return [{default_namespace: " ".join(map(str, model.encode(to_embed)))}]
+        return [{default_namespace: join_char.join(map(str, model.encode(to_embed.impl) if isinstance(to_embed, _Embed) else to_embed))}]
     elif isinstance(to_embed, dict):
-        return [
-            {
-                ns: " ".join(map(str, model.encode(embed_str)))
-                for ns, embed_str in to_embed.items()
-            }
-        ]
+        ret_dict = []
+        for ns, embed_str in to_embed.items():
+            join_char = "" if isinstance(embed_str, str) else " "
+            ret_dict.append({ns: join_char.join(map(str, model.encode(embed_str.impl) if isinstance(embed_str, _Embed) else embed_str))})
+        return ret_dict
     elif isinstance(to_embed, list):
-        if isinstance(to_embed[0], str):
-            if default_namespace is None:
-                raise ValueError(
-                    "The default namespace must be provided when embedding a list of strings"
-                )
-            return [
-                {default_namespace: " ".join(map(str, model.encode(embed_item)))}
-                for embed_item in to_embed
-            ]
-        else:
-            return [
-                {
-                    ns: " ".join(map(str, model.encode(embed_str)))
-                    for ns, embed_str in embed_item.items()
-                }
-                for embed_item in to_embed
-            ]
+        ret_dict = []
+        for embed_item in to_embed:
+            if isinstance(embed_item, str) or (isinstance(embed_item, _Embed) and isinstance(embed_item.impl, str)):
+                join_char = "" if isinstance(embed_item, str) else " "
+                if default_namespace is None:
+                    raise ValueError(
+                        "The default namespace must be provided when embedding a list of strings"
+                    )
+                ret_dict.append({default_namespace : join_char.join(map(str, model.encode(embed_item.impl) if isinstance(embed_item, _Embed) else embed_item))})
+            else:
+                inner_dict = {}
+                for ns, embed_str in embed_item.items():
+                    join_char = "" if isinstance(embed_str, str) else " "
+                    inner_dict[ns] = join_char.join(map(str, model.encode(embed_str.impl) if isinstance(embed_str, _Embed) else embed_str))
+                ret_dict.append(inner_dict)
+        return ret_dict
     else:
         raise ValueError("Invalid input format for embedding")
