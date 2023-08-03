@@ -201,6 +201,9 @@ class RLChain(Chain):
         multi_ex = parse_lines(text_parser, vw_ex)
         self.workspace.learn_one(multi_ex)
 
+def is_string_type(item: Any) -> bool:
+    """Helper function to check if an item is a string."""
+    return isinstance(item, str) or (isinstance(item, _Embed) and isinstance(item.impl, str))
 
 def embed_string_type(item: Union[str, _Embed], model: Any, namespace: Optional[str] = None) -> Dict[str, str]:
     """Helper function to embed a string or an _Embed object."""
@@ -216,23 +219,34 @@ def embed_string_type(item: Union[str, _Embed], model: Any, namespace: Optional[
     
     return {namespace: join_char.join(map(str, encoded))}
 
-def embed_dict_type(item: Dict, model: Any) -> Dict[str, str]:
+def embed_dict_type(item: Dict, model: Any) -> Dict[str, Union[str,List[str]]]:
     """Helper function to embed a dictionary item."""
     inner_dict = {}
     for ns, embed_item in item.items():
-        if isinstance(embed_item, str) or (isinstance(embed_item, _Embed) and isinstance(embed_item.impl, str)):
+        if is_string_type(embed_item):
             inner_dict.update(embed_string_type(embed_item, model, ns))
         elif isinstance(embed_item, list):
             inner_dict[ns] = []
-            for embedded_item in embed_item:
-                if isinstance(embedded_item, str) or (isinstance(embedded_item, _Embed) and isinstance(embedded_item.impl, str)):
-                    embedded = embed_string_type(embedded_item, model, ns)
+            for embed_list_item in embed_item:
+                if is_string_type(embed_list_item):
+                    embedded = embed_string_type(embed_list_item, model, ns)
                     inner_dict[ns].append(embedded[ns])
                 else:
-                    raise ValueError(f"Unsupported type {type(embedded_item)} for embedding.")
+                    raise ValueError(f"Unsupported type {type(embed_list_item)} for embedding.")
         else:
             raise ValueError(f"Unsupported type {type(embed_item)} for embedding.")
     return inner_dict
+
+def embed_list_type(item: list, model: Any, namespace: Optional[str] = None) -> List[Dict[str, Union[str, List[str]]]]:
+    ret_list = []
+    for embed_item in item:
+        if is_string_type(embed_item):
+            ret_list.append(embed_string_type(embed_item, model, namespace))
+        elif isinstance(embed_item, dict):
+            ret_list.append(embed_dict_type(embed_item, model))
+        else:
+            raise ValueError(f"Unsupported type {type(embed_item)} for embedding.")
+    return ret_list
 
 def embed(
     to_embed: Union[Union(str, _Embed(str)), Dict, List[Union(str, _Embed(str))], List[Dict]],
@@ -254,12 +268,6 @@ def embed(
     elif isinstance(to_embed, dict):
         return [embed_dict_type(to_embed, model)]
     elif isinstance(to_embed, list):
-        ret_dict = []
-        for embed_item in to_embed:
-            if isinstance(embed_item, str) or (isinstance(embed_item, _Embed) and isinstance(embed_item.impl, str)):
-                ret_dict.append(embed_string_type(embed_item, model, namespace))
-            else:
-                ret_dict.append(embed_dict_type(embed_item, model))
-        return ret_dict
+        return embed_list_type(to_embed, model, namespace)
     else:
         raise ValueError("Invalid input format for embedding")
