@@ -238,7 +238,7 @@ def embed(
     to_embed: Union[Union(str, _Embed(str)), Dict, List[Union(str, _Embed(str))], List[Dict]],
     model: Any,
     namespace: Optional[str] = None,
-) -> List[Dict[str, str]]:
+) -> List[Dict[str, Union[str,List[str]]]]:
     """
     Embeds the actions or context using the SentenceTransformer model
 
