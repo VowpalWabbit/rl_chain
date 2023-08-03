@@ -201,7 +201,7 @@ class RLChain(Chain):
         multi_ex = parse_lines(text_parser, vw_ex)
         self.workspace.learn_one(multi_ex)
 
-def is_string_type(item: Any) -> bool:
+def is_stringtype_instance(item: Any) -> bool:
     """Helper function to check if an item is a string."""
     return isinstance(item, str) or (isinstance(item, _Embed) and isinstance(item.impl, str))
 
@@ -223,12 +223,12 @@ def embed_dict_type(item: Dict, model: Any) -> Dict[str, Union[str,List[str]]]:
     """Helper function to embed a dictionary item."""
     inner_dict = {}
     for ns, embed_item in item.items():
-        if is_string_type(embed_item):
+        if is_stringtype_instance(embed_item):
             inner_dict.update(embed_string_type(embed_item, model, ns))
         elif isinstance(embed_item, list):
             inner_dict[ns] = []
             for embed_list_item in embed_item:
-                if is_string_type(embed_list_item):
+                if is_stringtype_instance(embed_list_item):
                     embedded = embed_string_type(embed_list_item, model, ns)
                     inner_dict[ns].append(embedded[ns])
                 else:
@@ -240,7 +240,7 @@ def embed_dict_type(item: Dict, model: Any) -> Dict[str, Union[str,List[str]]]:
 def embed_list_type(item: list, model: Any, namespace: Optional[str] = None) -> List[Dict[str, Union[str, List[str]]]]:
     ret_list = []
     for embed_item in item:
-        if is_string_type(embed_item):
+        if is_stringtype_instance(embed_item):
             ret_list.append(embed_string_type(embed_item, model, namespace))
         elif isinstance(embed_item, dict):
             ret_list.append(embed_dict_type(embed_item, model))
