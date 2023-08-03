@@ -6,6 +6,7 @@ import re
 import os
 from typing import Any, Dict, List, Optional, Tuple, Union
 from abc import ABC, abstractmethod
+from collections import defaultdict
 
 import vowpal_wabbit_next as vw
 from .vw_logger import VwLogger
@@ -217,9 +218,17 @@ def embed_string_type(item: Union[str, _Embed], model: Any, namespace: Optional[
 
 def embed_dict_type(item: Dict, model: Any) -> Dict[str, str]:
     """Helper function to embed a dictionary item."""
-    inner_dict = {}
-    for ns, embed_str in item.items():
-        inner_dict.update(embed_string_type(embed_str, model, ns))
+    inner_dict = defaultdict(list)
+    for ns, embed_item in item.items():
+        if isinstance(embed_item, str) or (isinstance(embed_item, _Embed) and isinstance(embed_item.impl, str)):
+            inner_dict.update(embed_string_type(embed_item, model, ns))
+        elif isinstance(embed_item, list):
+            emedded_list = embed(embed_item, model, ns)
+            for embedded_item in emedded_list:
+                for k, v in embedded_item.items():
+                    inner_dict[k].append(v)
+        else:
+            raise ValueError(f"Unsupported type {type(embed_item)} for embedding.")
     return inner_dict
 
 def embed(

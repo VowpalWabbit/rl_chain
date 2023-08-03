@@ -84,7 +84,10 @@ class ContextualBanditTextEmbedder(base.Embedder):
         example_string += f"shared "
         for context_item in context_emb:
             for ns, context in context_item.items():
-                example_string += f"|{ns} {context} "
+                if isinstance(context, str):
+                    example_string += f"|{ns} {context} "
+                elif isinstance(context, list):
+                    example_string += f"|{ns} {' '.join(context)} "
         example_string += "\n"
 
         for i, action in enumerate(action_embs):
