@@ -5,6 +5,8 @@ sys.path.append("..")
 import rl_chain.rl_chain_base as base
 from test_utils import MockEncoder
 
+import pytest
+
 encoded_text = "[ e n c o d e d ] "
 
 
@@ -238,3 +240,23 @@ def test_one_namespace_w_list_of_features_w_some_emb():
         base.embed({"test_namespace": [str1, base.Embed(str2)]}, MockEncoder())
         == expected
     )
+
+
+def test_nested_list_features_throws():
+    with pytest.raises(ValueError):
+        base.embed({"test_namespace": [[1, 2], [3, 4]]}, MockEncoder())
+
+
+def test_dict_in_list_throws():
+    with pytest.raises(ValueError):
+        base.embed({"test_namespace": [{"a": 1}, {"b": 2}]}, MockEncoder())
+
+
+def test_nested_dict_throws():
+    with pytest.raises(ValueError):
+        base.embed({"test_namespace": {"a": {"b": 1}}}, MockEncoder())
+
+
+def test_list_of_tuples_throws():
+    with pytest.raises(ValueError):
+        base.embed({"test_namespace": [("a", 1), ("b", 2)]}, MockEncoder())

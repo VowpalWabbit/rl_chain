@@ -207,12 +207,15 @@ def is_stringtype_instance(item: Any) -> bool:
 
 def embed_string_type(item: Union[str, _Embed], model: Any, namespace: Optional[str] = None) -> Dict[str, str]:
     """Helper function to embed a string or an _Embed object."""
+    join_char = ""
     if isinstance(item, _Embed):
         encoded = model.encode(item.impl)
         join_char = " "
-    else:
+    elif isinstance(item, str):
         encoded = item
         join_char = ""
+    else:
+        raise ValueError(f"Unsupported type {type(item)} for embedding")
 
     if namespace is None:
         raise ValueError("The default namespace must be provided when embedding a string or _Embed object.")
@@ -223,29 +226,22 @@ def embed_dict_type(item: Dict, model: Any) -> Dict[str, Union[str,List[str]]]:
     """Helper function to embed a dictionary item."""
     inner_dict = {}
     for ns, embed_item in item.items():
-        if is_stringtype_instance(embed_item):
-            inner_dict.update(embed_string_type(embed_item, model, ns))
-        elif isinstance(embed_item, list):
+        if isinstance(embed_item, list):
             inner_dict[ns] = []
             for embed_list_item in embed_item:
-                if is_stringtype_instance(embed_list_item):
-                    embedded = embed_string_type(embed_list_item, model, ns)
-                    inner_dict[ns].append(embedded[ns])
-                else:
-                    raise ValueError(f"Unsupported type {type(embed_list_item)} for embedding.")
+                embedded = embed_string_type(embed_list_item, model, ns)
+                inner_dict[ns].append(embedded[ns])
         else:
-            raise ValueError(f"Unsupported type {type(embed_item)} for embedding.")
+            inner_dict.update(embed_string_type(embed_item, model, ns))
     return inner_dict
 
 def embed_list_type(item: list, model: Any, namespace: Optional[str] = None) -> List[Dict[str, Union[str, List[str]]]]:
     ret_list = []
     for embed_item in item:
-        if is_stringtype_instance(embed_item):
-            ret_list.append(embed_string_type(embed_item, model, namespace))
-        elif isinstance(embed_item, dict):
+        if isinstance(embed_item, dict):
             ret_list.append(embed_dict_type(embed_item, model))
         else:
-            raise ValueError(f"Unsupported type {type(embed_item)} for embedding.")
+            ret_list.append(embed_string_type(embed_item, model, namespace))
     return ret_list
 
 def embed(
