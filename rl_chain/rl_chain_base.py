@@ -25,12 +25,14 @@ ch.setFormatter(formatter)
 ch.setLevel(logging.INFO)
 logger.addHandler(ch)
 
+
 class _Embed:
     def __init__(self, impl):
         self.impl = impl
 
     def __str__(self):
         return self.impl
+
 
 def Embed(anything):
     if isinstance(anything, list):
@@ -39,13 +41,16 @@ def Embed(anything):
         return {k: _Embed(v) for k, v in anything.items()}
     return _Embed(anything)
 
+
 def parse_lines(parser: vw.TextFormatParser, input_str: str) -> List[vw.Example]:
     return [parser.parse_line(line) for line in input_str.split("\n")]
+
 
 class Embedder(ABC):
     @abstractmethod
     def to_vw_format(self, **kwargs) -> str:
         pass
+
 
 class ResponseValidator(ABC):
     """Abstract method to grade the chosen action or the response of the llm"""
@@ -55,6 +60,7 @@ class ResponseValidator(ABC):
         self, inputs: Dict[str, Any], llm_response: str, **kwargs
     ) -> float:
         pass
+
 
 class RLChain(Chain):
     """
@@ -156,10 +162,7 @@ class RLChain(Chain):
     ) -> Dict[str, str]:
         _run_manager = run_manager or CallbackManagerForChainRun.get_noop_manager()
 
-        t = self.llm_chain.run(
-            **inputs,
-            callbacks=_run_manager.get_child(),
-        )
+        t = self.llm_chain.run(**inputs, callbacks=_run_manager.get_child())
         _run_manager.on_text(t, color="green", verbose=self.verbose)
         t = t.strip()
 
@@ -201,11 +204,17 @@ class RLChain(Chain):
         multi_ex = parse_lines(text_parser, vw_ex)
         self.workspace.learn_one(multi_ex)
 
+
 def is_stringtype_instance(item: Any) -> bool:
     """Helper function to check if an item is a string."""
-    return isinstance(item, str) or (isinstance(item, _Embed) and isinstance(item.impl, str))
+    return isinstance(item, str) or (
+        isinstance(item, _Embed) and isinstance(item.impl, str)
+    )
 
-def embed_string_type(item: Union[str, _Embed], model: Any, namespace: Optional[str] = None) -> Dict[str, str]:
+
+def embed_string_type(
+    item: Union[str, _Embed], model: Any, namespace: Optional[str] = None
+) -> Dict[str, str]:
     """Helper function to embed a string or an _Embed object."""
     join_char = ""
     if isinstance(item, _Embed):
@@ -218,11 +227,14 @@ def embed_string_type(item: Union[str, _Embed], model: Any, namespace: Optional[
         raise ValueError(f"Unsupported type {type(item)} for embedding")
 
     if namespace is None:
-        raise ValueError("The default namespace must be provided when embedding a string or _Embed object.")
-    
+        raise ValueError(
+            "The default namespace must be provided when embedding a string or _Embed object."
+        )
+
     return {namespace: join_char.join(map(str, encoded))}
 
-def embed_dict_type(item: Dict, model: Any) -> Dict[str, Union[str,List[str]]]:
+
+def embed_dict_type(item: Dict, model: Any) -> Dict[str, Union[str, List[str]]]:
     """Helper function to embed a dictionary item."""
     inner_dict = {}
     for ns, embed_item in item.items():
@@ -235,7 +247,10 @@ def embed_dict_type(item: Dict, model: Any) -> Dict[str, Union[str,List[str]]]:
             inner_dict.update(embed_string_type(embed_item, model, ns))
     return inner_dict
 
-def embed_list_type(item: list, model: Any, namespace: Optional[str] = None) -> List[Dict[str, Union[str, List[str]]]]:
+
+def embed_list_type(
+    item: list, model: Any, namespace: Optional[str] = None
+) -> List[Dict[str, Union[str, List[str]]]]:
     ret_list = []
     for embed_item in item:
         if isinstance(embed_item, dict):
@@ -244,11 +259,14 @@ def embed_list_type(item: list, model: Any, namespace: Optional[str] = None) -> 
             ret_list.append(embed_string_type(embed_item, model, namespace))
     return ret_list
 
+
 def embed(
-    to_embed: Union[Union(str, _Embed(str)), Dict, List[Union(str, _Embed(str))], List[Dict]],
+    to_embed: Union[
+        Union(str, _Embed(str)), Dict, List[Union(str, _Embed(str))], List[Dict]
+    ],
     model: Any,
     namespace: Optional[str] = None,
-) -> List[Dict[str, Union[str,List[str]]]]:
+) -> List[Dict[str, Union[str, List[str]]]]:
     """
     Embeds the actions or context using the SentenceTransformer model
 
@@ -259,7 +277,9 @@ def embed(
     Returns:
         List[Dict[str, str]]: A list of dictionaries where each dictionary has the namespace as the key and the embedded string as the value
     """
-    if (isinstance(to_embed, _Embed) and isinstance(to_embed.impl, str)) or isinstance(to_embed, str):
+    if (isinstance(to_embed, _Embed) and isinstance(to_embed.impl, str)) or isinstance(
+        to_embed, str
+    ):
         return [embed_string_type(to_embed, model, namespace)]
     elif isinstance(to_embed, dict):
         return [embed_dict_type(to_embed, model)]

@@ -22,12 +22,15 @@ from langchain.base_language import BaseLanguageModel
 from langchain.chains.llm import LLMChain
 from sentence_transformers import SentenceTransformer
 
+
 class Label:
     chosen: List[int]
     p: List[float]
     r: Optional[float]
 
-    def __init__(self, vwpred: List[List[Tuple[int, float]]], r: Optional[float] = None):
+    def __init__(
+        self, vwpred: List[List[Tuple[int, float]]], r: Optional[float] = None
+    ):
         self.chosen = [p[0][0] for p in vwpred]
         self.p = [p[0][1] for p in vwpred]
         self.r = r
@@ -47,12 +50,22 @@ class Decision:
     @property
     def vwtxt(self):
         context = [f'slates shared {-self.label.r if self.label else ""} |']
-        actions = chain.from_iterable([[
-            f'slates action {i} |Action {action}'] 
-            for i, slot in enumerate(self.actions) for action in slot])
-        ps = [f'{a}:{p}' for a, p in self.label.ap()] if self.label else [''] * len(self.actions)
-        slots = [f'slates slot {p} |' for p in ps]
-        return '\n'.join(list(chain.from_iterable([context, actions, slots]))) # TODO: remove
+        actions = chain.from_iterable(
+            [
+                [f"slates action {i} |Action {action}"]
+                for i, slot in enumerate(self.actions)
+                for action in slot
+            ]
+        )
+        ps = (
+            [f"{a}:{p}" for a, p in self.label.ap()]
+            if self.label
+            else [""] * len(self.actions)
+        )
+        slots = [f"slates slot {p} |" for p in ps]
+        return "\n".join(
+            list(chain.from_iterable([context, actions, slots]))
+        )  # TODO: remove
 
 
 class Policy(ABC):
@@ -64,10 +77,12 @@ class Policy(ABC):
 class VwPolicy(Policy):
     def __init__(self, workspace: vw.Workspace, *_, **__):
         self.workspace = workspace
-    
+
     def predict(self, decision: Decision) -> Label:
         text_parser = vw.TextFormatParser(self.workspace)
-        return Label(self.workspace.predict_one(base.parse_lines(text_parser, decision.vwtxt)))
+        return Label(
+            self.workspace.predict_one(base.parse_lines(text_parser, decision.vwtxt))
+        )
 
 
 class RandomPolicy(Policy):
@@ -75,7 +90,12 @@ class RandomPolicy(Policy):
         ...
 
     def predict(self, decision: Decision) -> Label:
-        return Label([[(random.randint(0, len(slot) - 1), 1.0 / len(slot))] for slot in decision.actions])
+        return Label(
+            [
+                [(random.randint(0, len(slot) - 1), 1.0 / len(slot))]
+                for slot in decision.actions
+            ]
+        )
 
 
 class FirstChoicePolicy(Policy):
@@ -84,6 +104,7 @@ class FirstChoicePolicy(Policy):
 
     def predict(self, decision: Decision) -> Label:
         return Label([[(0, 1)] for slot in decision.actions])
+
 
 class LLMResponseValidatorForSlates(base.ResponseValidator):
     llm_chain: LLMChain
@@ -103,7 +124,10 @@ class LLMResponseValidatorForSlates(base.ResponseValidator):
             )
 
             chat_prompt = ChatPromptTemplate.from_messages(
-                [LLMResponseValidatorForSlates.default_system_prompt, human_message_prompt]
+                [
+                    LLMResponseValidatorForSlates.default_system_prompt,
+                    human_message_prompt,
+                ]
             )
             self.prompt = chat_prompt
 
@@ -112,10 +136,10 @@ class LLMResponseValidatorForSlates(base.ResponseValidator):
     def grade_response(
         self, inputs: Dict[str, Any], llm_response: str, **kwargs
     ) -> float:
-        
+
         vars = {k: v for k, v in inputs.items() if k in self.prompt.input_variables}
-        if 'llm_response' in self.prompt.input_variables:
-            vars['llm_response'] = llm_response
+        if "llm_response" in self.prompt.input_variables:
+            vars["llm_response"] = llm_response
         ranking = self.llm_chain.predict(**vars)
         ranking = ranking.strip()
         try:
@@ -126,13 +150,14 @@ class LLMResponseValidatorForSlates(base.ResponseValidator):
                 "The llm did not manage to rank the response as expected, there is always the option to try again"
             )
 
+
 class SlatesPersonalizerChain(base.RLChain):
     last_decision: Optional[Decision] = None
     embeddings_model: Optional[SentenceTransformer] = None
     policy: Optional[Policy] = None
     _reward: List[float] = PrivateAttr(default=[])
 
-    def __init__(self, policy = VwPolicy, *args, **kwargs):
+    def __init__(self, policy=VwPolicy, *args, **kwargs):
         vw_cmd = kwargs.get("vw_cmd", [])
         if not vw_cmd:
             vw_cmd = [
@@ -144,9 +169,7 @@ class SlatesPersonalizerChain(base.RLChain):
             ]
         else:
             if "--slates" not in vw_cmd:
-                raise ValueError(
-                    "If vw_cmd is specified, it must include --slates"
-                )
+                raise ValueError("If vw_cmd is specified, it must include --slates")
 
         kwargs["vw_cmd"] = vw_cmd
 
@@ -175,12 +198,19 @@ class SlatesPersonalizerChain(base.RLChain):
         for (k, v) in raw_actions.items():
             actions.append(v)
             actions_map.append(k)
-            
+
         def _str(embedding):
-            return ' '.join([f'{i}:{e}' for i, e in enumerate(embedding)])
-        
+            return " ".join([f"{i}:{e}" for i, e in enumerate(embedding)])
+
         action_features = [
-            [_str(self.embeddings_model.encode(action.impl)) if isinstance(action, base._Embed) else action.replace(" ", "_") for action in slot] for slot in actions]
+            [
+                _str(self.embeddings_model.encode(action.impl))
+                if isinstance(action, base._Embed)
+                else action.replace(" ", "_")
+                for action in slot
+            ]
+            for slot in actions
+        ]
         return actions, actions_map, action_features
 
     def _call(
@@ -188,14 +218,17 @@ class SlatesPersonalizerChain(base.RLChain):
         inputs: Dict[str, Any],
         run_manager: Optional[CallbackManagerForChainRun] = None,
     ) -> Dict[str, str]:
-        named_actions = {k: inputs[k] if isinstance(inputs[k], list) else [inputs[k]] for k in self.llm_chain.prompt.input_variables}
-        actions, actions_map, action_features = self._featurize(named_actions)        
+        named_actions = {
+            k: inputs[k] if isinstance(inputs[k], list) else [inputs[k]]
+            for k in self.llm_chain.prompt.input_variables
+        }
+        actions, actions_map, action_features = self._featurize(named_actions)
         self.last_decision = Decision(action_features)
         self.last_decision.label = self.policy.predict(self.last_decision)
 
         preds = {}
         for i, (j, a) in enumerate(zip(self.last_decision.label.chosen, actions)):
-            preds[actions_map[i]] = str(a[j]) 
+            preds[actions_map[i]] = str(a[j])
         llm_resp = super()._call(run_manager=run_manager, inputs=preds)
 
         if self.response_validator:
@@ -215,11 +248,11 @@ class SlatesPersonalizerChain(base.RLChain):
         return llm_resp
 
     def learn_with_specific_cost(self, cost: int, force_cost=False):
-        ... # TODO: implement
+        ...  # TODO: implement
 
     @property
     def reward(self):
-        return pd.DataFrame({'r': self._reward})
+        return pd.DataFrame({"r": self._reward})
 
     @property
     def _chain_type(self) -> str:
@@ -227,12 +260,11 @@ class SlatesPersonalizerChain(base.RLChain):
 
     @classmethod
     def from_chain(cls, llm_chain: Chain, prompt: PromptTemplate, **kwargs: Any):
-        return SlatesPersonalizerChain(
-            llm_chain=llm_chain, prompt=prompt, **kwargs
-        )
+        return SlatesPersonalizerChain(llm_chain=llm_chain, prompt=prompt, **kwargs)
 
     @classmethod
     def from_llm(cls, llm: BaseLanguageModel, prompt: PromptTemplate, **kwargs: Any):
         llm_chain = LLMChain(llm=llm, prompt=prompt)
-        return SlatesPersonalizerChain.from_chain(llm_chain=llm_chain, prompt=prompt, **kwargs)
-
+        return SlatesPersonalizerChain.from_chain(
+            llm_chain=llm_chain, prompt=prompt, **kwargs
+        )

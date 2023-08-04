@@ -8,6 +8,5 @@ You have to embed this entity into the text where it makes sense. Here is the te
 
 
 PROMPT = PromptTemplate(
-    input_variables=["selected", "text_to_personalize"],
-    template=_PROMPT_TEMPLATE,
+    input_variables=["selected", "text_to_personalize"], template=_PROMPT_TEMPLATE
 )

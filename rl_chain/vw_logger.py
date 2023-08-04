@@ -2,6 +2,7 @@ from typing import Union, Optional
 from pathlib import Path
 from os import PathLike
 
+
 class VwLogger:
     def __init__(self, path: Optional[Union[str, PathLike]]):
         self.path = Path(path) if path else None
@@ -10,5 +11,5 @@ class VwLogger:
 
     def log(self, vw_ex: str):
         if self.path:
-            with open(self.path, 'a') as f:
-                f.write(f'{vw_ex}\n\n')
+            with open(self.path, "a") as f:
+                f.write(f"{vw_ex}\n\n")
