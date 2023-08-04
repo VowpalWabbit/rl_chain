@@ -6,6 +6,7 @@ import re
 import os
 from typing import Any, Dict, List, Optional, Tuple, Union
 from abc import ABC, abstractmethod
+from collections import defaultdict
 
 import vowpal_wabbit_next as vw
 from .vw_logger import VwLogger
@@ -200,33 +201,54 @@ class RLChain(Chain):
         multi_ex = parse_lines(text_parser, vw_ex)
         self.workspace.learn_one(multi_ex)
 
+def is_stringtype_instance(item: Any) -> bool:
+    """Helper function to check if an item is a string."""
+    return isinstance(item, str) or (isinstance(item, _Embed) and isinstance(item.impl, str))
 
 def embed_string_type(item: Union[str, _Embed], model: Any, namespace: Optional[str] = None) -> Dict[str, str]:
     """Helper function to embed a string or an _Embed object."""
+    join_char = ""
     if isinstance(item, _Embed):
         encoded = model.encode(item.impl)
         join_char = " "
-    else:
+    elif isinstance(item, str):
         encoded = item
         join_char = ""
+    else:
+        raise ValueError(f"Unsupported type {type(item)} for embedding")
 
     if namespace is None:
         raise ValueError("The default namespace must be provided when embedding a string or _Embed object.")
     
     return {namespace: join_char.join(map(str, encoded))}
 
-def embed_dict_type(item: Dict, model: Any) -> Dict[str, str]:
+def embed_dict_type(item: Dict, model: Any) -> Dict[str, Union[str,List[str]]]:
     """Helper function to embed a dictionary item."""
     inner_dict = {}
-    for ns, embed_str in item.items():
-        inner_dict.update(embed_string_type(embed_str, model, ns))
+    for ns, embed_item in item.items():
+        if isinstance(embed_item, list):
+            inner_dict[ns] = []
+            for embed_list_item in embed_item:
+                embedded = embed_string_type(embed_list_item, model, ns)
+                inner_dict[ns].append(embedded[ns])
+        else:
+            inner_dict.update(embed_string_type(embed_item, model, ns))
     return inner_dict
+
+def embed_list_type(item: list, model: Any, namespace: Optional[str] = None) -> List[Dict[str, Union[str, List[str]]]]:
+    ret_list = []
+    for embed_item in item:
+        if isinstance(embed_item, dict):
+            ret_list.append(embed_dict_type(embed_item, model))
+        else:
+            ret_list.append(embed_string_type(embed_item, model, namespace))
+    return ret_list
 
 def embed(
     to_embed: Union[Union(str, _Embed(str)), Dict, List[Union(str, _Embed(str))], List[Dict]],
     model: Any,
     namespace: Optional[str] = None,
-) -> List[Dict[str, str]]:
+) -> List[Dict[str, Union[str,List[str]]]]:
     """
     Embeds the actions or context using the SentenceTransformer model
 
@@ -242,12 +264,6 @@ def embed(
     elif isinstance(to_embed, dict):
         return [embed_dict_type(to_embed, model)]
     elif isinstance(to_embed, list):
-        ret_dict = []
-        for embed_item in to_embed:
-            if isinstance(embed_item, str) or (isinstance(embed_item, _Embed) and isinstance(embed_item.impl, str)):
-                ret_dict.append(embed_string_type(embed_item, model, namespace))
-            else:
-                ret_dict.append(embed_dict_type(embed_item, model))
-        return ret_dict
+        return embed_list_type(to_embed, model, namespace)
     else:
         raise ValueError("Invalid input format for embedding")

@@ -5,6 +5,8 @@ sys.path.append("..")
 import rl_chain.rl_chain_base as base
 from test_utils import MockEncoder
 
+import pytest
+
 encoded_text = "[ e n c o d e d ] "
 
 
@@ -58,14 +60,8 @@ def test_simple_action_strlist_no_emb():
     str1 = "test1"
     str2 = "test2"
     str3 = "test3"
-    expected = [
-        {"a_namespace": str1},
-        {"a_namespace": str2},
-        {"a_namespace": str3},
-    ]
-    assert (
-        base.embed([str1, str2, str3], MockEncoder(), "a_namespace") == expected
-    )
+    expected = [{"a_namespace": str1}, {"a_namespace": str2}, {"a_namespace": str3}]
+    assert base.embed([str1, str2, str3], MockEncoder(), "a_namespace") == expected
 
 
 def test_simple_action_strlist_w_emb():
@@ -99,9 +95,7 @@ def test_simple_action_strlist_w_some_emb():
     ]
     assert (
         base.embed(
-            [str1, base.Embed(str2), base.Embed(str3)],
-            MockEncoder(),
-            "a_namespace",
+            [str1, base.Embed(str2), base.Embed(str3)], MockEncoder(), "a_namespace"
         )
         == expected
     )
@@ -228,3 +222,41 @@ def test_action_w_namespace_w_emb_w_more_than_one_item_in_first_dict():
         )
         == expected
     )
+
+
+def test_one_namespace_w_list_of_features_no_emb():
+    str1 = "test1"
+    str2 = "test2"
+    expected = [{"test_namespace": [str1, str2]}]
+    assert base.embed({"test_namespace": [str1, str2]}, MockEncoder()) == expected
+
+
+def test_one_namespace_w_list_of_features_w_some_emb():
+    str1 = "test1"
+    str2 = "test2"
+    encoded_str2 = " ".join(char for char in str2)
+    expected = [{"test_namespace": [str1, encoded_text + encoded_str2]}]
+    assert (
+        base.embed({"test_namespace": [str1, base.Embed(str2)]}, MockEncoder())
+        == expected
+    )
+
+
+def test_nested_list_features_throws():
+    with pytest.raises(ValueError):
+        base.embed({"test_namespace": [[1, 2], [3, 4]]}, MockEncoder())
+
+
+def test_dict_in_list_throws():
+    with pytest.raises(ValueError):
+        base.embed({"test_namespace": [{"a": 1}, {"b": 2}]}, MockEncoder())
+
+
+def test_nested_dict_throws():
+    with pytest.raises(ValueError):
+        base.embed({"test_namespace": {"a": {"b": 1}}}, MockEncoder())
+
+
+def test_list_of_tuples_throws():
+    with pytest.raises(ValueError):
+        base.embed({"test_namespace": [("a", 1), ("b", 2)]}, MockEncoder())
