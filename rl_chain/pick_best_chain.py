@@ -1,4 +1,4 @@
-from . import rl_chain_base as base 
+from . import rl_chain_base as base
 
 from langchain.prompts import (
     ChatPromptTemplate,
@@ -18,6 +18,7 @@ import numpy as np
 from langchain.base_language import BaseLanguageModel
 from langchain.chains.llm import LLMChain
 from sentence_transformers import SentenceTransformer
+
 
 class ContextualBanditTextEmbedder(base.Embedder):
     """
@@ -55,7 +56,9 @@ class ContextualBanditTextEmbedder(base.Embedder):
         """
         return base.embed(context, self.model, "Context")
 
-    def to_vw_format(self, inputs :Dict[str, Any], cb_label: Optional[Tuple]=None) -> str:
+    def to_vw_format(
+        self, inputs: Dict[str, Any], cb_label: Optional[Tuple] = None
+    ) -> str:
         """
         Converts the context and actions into a format that can be used by VW
 
@@ -71,14 +74,16 @@ class ContextualBanditTextEmbedder(base.Embedder):
         if cb_label:
             chosen_action, cost, prob = cb_label
 
-        context = inputs.get('context')
-        actions = inputs.get('actions')
+        context = inputs.get("context")
+        actions = inputs.get("actions")
 
         context_emb = self.embed_context(context) if context else None
         action_embs = self.embed_actions(actions) if actions else None
 
         if not context_emb or not action_embs:
-            raise ValueError("Context and actions must be provided in the inputs dictionary")
+            raise ValueError(
+                "Context and actions must be provided in the inputs dictionary"
+            )
 
         example_string = ""
         example_string += f"shared "
@@ -96,6 +101,7 @@ class ContextualBanditTextEmbedder(base.Embedder):
         # Strip the last newline
         return example_string[:-1]
 
+
 class AutoValidatePickBest(base.ResponseValidator):
     llm_chain: LLMChain
     prompt: PromptTemplate
@@ -107,7 +113,7 @@ class AutoValidatePickBest(base.ResponseValidator):
             template = "PLEASE RESPOND ONLY WITH A SIGNLE FLOAT AND NO OTHER TEXT EXPLANATION\n You are a strict judge that is called on to rank a response based on given criteria.\
                 You must respond with your ranking by providing a single float within the range [-1, 1], -1 being very bad response and 1 being very good response."
             system_message_prompt = SystemMessagePromptTemplate.from_template(template)
-            human_template = "Given this context \"{context}\" as the most important attribute, rank how good or bad this text selection is: \"{selected}\"."
+            human_template = 'Given this context "{context}" as the most important attribute, rank how good or bad this text selection is: "{selected}".'
             human_message_prompt = HumanMessagePromptTemplate.from_template(
                 human_template
             )
@@ -119,7 +125,9 @@ class AutoValidatePickBest(base.ResponseValidator):
 
         self.llm_chain = LLMChain(llm=llm, prompt=self.prompt)
 
-    def grade_response(self, inputs: Dict[str, Any], llm_response: str, **kwargs) -> float:
+    def grade_response(
+        self, inputs: Dict[str, Any], llm_response: str, **kwargs
+    ) -> float:
         inputs["llm_response"] = llm_response
         inputs["selected"] = inputs["selected"]
         ranking = self.llm_chain.predict(**inputs)
@@ -196,11 +204,11 @@ class PickBest(base.RLChain):
                 raise ValueError(
                     "If vw_cmd is specified, it must include --cb_explore_adf"
                 )
-        
+
         kwargs["vw_cmd"] = vw_cmd
 
         super().__init__(*args, **kwargs)
-    
+
     @property
     def input_keys(self) -> List[str]:
         """Expect input key.
@@ -248,7 +256,7 @@ class PickBest(base.RLChain):
         sampled_prob = sampled_ap[1]
 
         pred_action = actions[sampled_action]
-        inputs['selected'] = pred_action
+        inputs["selected"] = pred_action
 
         llm_resp: Dict[str, Any] = super()._call(run_manager=run_manager, inputs=inputs)
 
@@ -259,14 +267,13 @@ class PickBest(base.RLChain):
         if self.response_validator:
             try:
                 cost = -1.0 * self.response_validator.grade_response(
-                    inputs=inputs,
-                    llm_response=llm_resp[self.output_key]                )
+                    inputs=inputs, llm_response=llm_resp[self.output_key]
+                )
                 latest_cost = cost
                 cb_label = (sampled_action, cost, sampled_prob)
 
                 vw_ex = self.text_embedder.to_vw_format(
-                    cb_label=cb_label,
-                    inputs=inputs,
+                    cb_label=cb_label, inputs=inputs
                 )
                 self._learn(vw_ex)
 
@@ -294,13 +301,15 @@ class PickBest(base.RLChain):
         return "llm_personalizer_chain"
 
     @classmethod
-    def from_chain(cls, llm_chain: Chain, prompt: PromptTemplate = PROMPT, **kwargs: Any):
-        return PickBest(
-            llm_chain=llm_chain, prompt=prompt, **kwargs
-        )
+    def from_chain(
+        cls, llm_chain: Chain, prompt: PromptTemplate = PROMPT, **kwargs: Any
+    ):
+        return PickBest(llm_chain=llm_chain, prompt=prompt, **kwargs)
 
     @classmethod
-    def from_llm(cls, llm: BaseLanguageModel, prompt: PromptTemplate = PROMPT, **kwargs: Any):
+    def from_llm(
+        cls, llm: BaseLanguageModel, prompt: PromptTemplate = PROMPT, **kwargs: Any
+    ):
         llm_chain = LLMChain(llm=llm, prompt=prompt)
         return PickBest.from_chain(llm_chain=llm_chain, prompt=prompt, **kwargs)
 
@@ -317,7 +326,7 @@ class PickBest(base.RLChain):
             raise RuntimeError(
                 "check_response is set to True, this must be turned off for explicit feedback and training to be provided, or overriden by calling the method with force_reward=True"
             )
-        cost = -1.0 * reward      
+        cost = -1.0 * reward
         cb_label = (
             response_result.chosen_action,
             cost,
@@ -325,7 +334,6 @@ class PickBest(base.RLChain):
         )
 
         vw_ex = self.text_embedder.to_vw_format(
-            cb_label=cb_label,
-            inputs=response_result.inputs,
+            cb_label=cb_label, inputs=response_result.inputs
         )
         self._learn(vw_ex)
