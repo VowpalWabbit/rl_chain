@@ -39,15 +39,6 @@ class Label:
         return zip(self.chosen, self.p)
 
 
-class Decision:
-    actions: List[List[str]]
-    label: Optional[Label]
-
-    def __init__(self, actions, label=None):
-        self.actions = actions
-        self.label = label
-
-
 class SlatesTextEmbedder(base.Embedder):
     """
     Slates Text Embedder class that embeds the context and actions and slates into a format that can be used by VW
@@ -85,37 +76,44 @@ class SlatesTextEmbedder(base.Embedder):
             for slot in actions
         ]
 
-        self.action_features = action_features
         return actions, actions_map, action_features
 
     def to_vw_format(self, inputs: Dict[str, Any]) -> str:
         slates_label = inputs.get("slates_label", None)
+        named_actions = inputs.get("named_actions", None)
+        if named_actions is None:
+            raise ValueError("named_actions must be provided")
 
+        actions, actions_map, action_features = self.featurize(named_actions)
         context = [f'slates shared {-1.*slates_label.r if slates_label else ""} |']
-
         actions = chain.from_iterable(
             [
                 [f"slates action {i} |Action {action}"]
-                for i, slot in enumerate(self.action_features)
+                for i, slot in enumerate(action_features)
                 for action in slot
             ]
         )
         ps = (
             [f"{a}:{p}" for a, p in slates_label.get_actions_and_probs()]
             if slates_label
-            else [""] * len(self.action_features)
+            else [""] * len(action_features)
         )
         slots = [f"slates slot {p} |" for p in ps]
         return "\n".join(list(chain.from_iterable([context, actions, slots])))
+
+    def to_action_features(self, inputs: Dict[str, Any]):
+        named_actions = inputs.get("named_actions", None)
+        if named_actions is None:
+            raise ValueError("named_actions must be provided")
+
+        _, _, action_features = self.featurize(named_actions)
+        return action_features
 
 
 class Policy(ABC):
     @abstractmethod
     def predict(
-        self,
-        decision: Decision,
-        text_embedder: SlatesTextEmbedder,
-        inputs: Dict[str, Any],
+        self, text_embedder: SlatesTextEmbedder, inputs: Dict[str, Any]
     ) -> Label:
         ...
 
@@ -125,10 +123,7 @@ class VwPolicy(Policy):
         self.workspace = workspace
 
     def predict(
-        self,
-        decision: Decision,
-        text_embedder: SlatesTextEmbedder,
-        inputs: Dict[str, Any],
+        self, text_embedder: SlatesTextEmbedder, inputs: Dict[str, Any]
     ) -> Label:
         text_parser = vw.TextFormatParser(self.workspace)
         return Label(
@@ -143,15 +138,12 @@ class RandomPolicy(Policy):
         ...
 
     def predict(
-        self,
-        decision: Decision,
-        text_embedder: SlatesTextEmbedder,
-        inputs: Dict[str, Any],
+        self, text_embedder: SlatesTextEmbedder, inputs: Dict[str, Any]
     ) -> Label:
         return Label(
             [
                 [(random.randint(0, len(slot) - 1), 1.0 / len(slot))]
-                for slot in decision.actions
+                for slot in text_embedder.to_action_features(inputs)
             ]
         )
 
@@ -161,12 +153,9 @@ class FirstChoicePolicy(Policy):
         ...
 
     def predict(
-        self,
-        decision: Decision,
-        text_embedder: SlatesTextEmbedder,
-        inputs: Dict[str, Any],
+        self, text_embedder: SlatesTextEmbedder, inputs: Dict[str, Any]
     ) -> Label:
-        return Label([[(0, 1)] for slot in decision.actions])
+        return Label([[(0, 1)] for slot in text_embedder.to_action_features(inputs)])
 
 
 class LLMResponseValidatorForSlates(base.ResponseValidator):
@@ -215,7 +204,6 @@ class LLMResponseValidatorForSlates(base.ResponseValidator):
 
 
 class SlatesPersonalizerChain(base.RLChain):
-    last_decision: Optional[Decision] = None
     text_embedder: Optional[SlatesTextEmbedder] = None
     policy: Optional[Policy] = None
     _reward: List[float] = PrivateAttr(default=[])
@@ -255,33 +243,29 @@ class SlatesPersonalizerChain(base.RLChain):
         inputs: Dict[str, Any],
         run_manager: Optional[CallbackManagerForChainRun] = None,
     ) -> Dict[str, str]:
+
         named_actions = {
             k: inputs[k] if isinstance(inputs[k], list) else [inputs[k]]
             for k in self.llm_chain.prompt.input_variables
         }
-        actions, actions_map, action_features = self.text_embedder.featurize(
-            named_actions
-        )
-        self.last_decision = Decision(action_features)
-        self.last_decision.label = self.policy.predict(
-            self.last_decision, self.text_embedder, inputs
-        )
+
+        inputs["named_actions"] = named_actions
+        label = self.policy.predict(self.text_embedder, inputs)
 
         preds = {}
-        for i, (j, a) in enumerate(zip(self.last_decision.label.chosen, actions)):
-            preds[actions_map[i]] = str(a[j])
+        for i, (j, a) in enumerate(zip(label.chosen, named_actions.values())):
+            preds[list(named_actions.keys())[i]] = str(a[j])
+
         llm_resp = super()._call(run_manager=run_manager, inputs=preds)
 
         if self.response_validator:
             try:
-                self.last_decision.label.r = self.response_validator.grade_response(
+                label.r = self.response_validator.grade_response(
                     inputs=preds, llm_response=llm_resp[self.output_key]
                 )
-                self._reward.append(self.last_decision.label.r)
+                self._reward.append(label.r)
 
-                inputs["slates_label"] = (
-                    self.last_decision.label if self.last_decision.label else None
-                )
+                inputs["slates_label"] = label if label else None
                 vw_ex = self.text_embedder.to_vw_format(inputs)
                 self._learn(vw_ex)
 
