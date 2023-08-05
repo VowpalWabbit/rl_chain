@@ -27,11 +27,11 @@ logger.addHandler(ch)
 
 
 class _Embed:
-    def __init__(self, impl):
-        self.impl = impl
+    def __init__(self, value):
+        self.value = value
 
     def __str__(self):
-        return self.impl
+        return self.value
 
 
 def Embed(anything):
@@ -40,6 +40,32 @@ def Embed(anything):
     elif isinstance(anything, dict):
         return {k: _Embed(v) for k, v in anything.items()}
     return _Embed(anything)
+
+
+class _BasedOn:
+    def __init__(self, value):
+        self.value = value
+
+    def __value__(self):
+        return self.value
+
+
+def BasedOn(anything):
+    return _BasedOn(anything)
+
+
+class _ToSelectFrom:
+    def __init__(self, value):
+        self.value = value
+
+    def __value__(self):
+        return self.value
+
+
+def ToSelectFrom(anything):
+    if not isinstance(anything, list):
+        raise ValueError("ToSelectFrom must be a list to select from")
+    return _ToSelectFrom(anything)
 
 
 def parse_lines(parser: vw.TextFormatParser, input_str: str) -> List[vw.Example]:
@@ -208,7 +234,7 @@ class RLChain(Chain):
 def is_stringtype_instance(item: Any) -> bool:
     """Helper function to check if an item is a string."""
     return isinstance(item, str) or (
-        isinstance(item, _Embed) and isinstance(item.impl, str)
+        isinstance(item, _Embed) and isinstance(item.value, str)
     )
 
 
@@ -218,7 +244,7 @@ def embed_string_type(
     """Helper function to embed a string or an _Embed object."""
     join_char = ""
     if isinstance(item, _Embed):
-        encoded = model.encode(item.impl)
+        encoded = model.encode(item.value)
         join_char = " "
     elif isinstance(item, str):
         encoded = item
@@ -277,7 +303,7 @@ def embed(
     Returns:
         List[Dict[str, str]]: A list of dictionaries where each dictionary has the namespace as the key and the embedded string as the value
     """
-    if (isinstance(to_embed, _Embed) and isinstance(to_embed.impl, str)) or isinstance(
+    if (isinstance(to_embed, _Embed) and isinstance(to_embed.value, str)) or isinstance(
         to_embed, str
     ):
         return [embed_string_type(to_embed, model, namespace)]
