@@ -55,9 +55,13 @@ class SlatesTextEmbedder(base.Embedder):
 
         self.model = model
 
-    def featurize(self, raw_actions: Dict[str, List[str]]):
+    def to_action_features(self, inputs: Dict[str, List[str]]):
         def _str(embedding):
             return " ".join([f"{i}:{e}" for i, e in enumerate(embedding)])
+
+        named_actions = inputs.get("named_actions", None)
+        if named_actions is None:
+            raise ValueError("named_actions must be provided")
 
         action_features = [
             [
@@ -66,7 +70,7 @@ class SlatesTextEmbedder(base.Embedder):
                 else action.replace(" ", "_")
                 for action in slot
             ]
-            for slot in raw_actions.values()
+            for slot in named_actions.values()
         ]
 
         return action_features
@@ -74,11 +78,7 @@ class SlatesTextEmbedder(base.Embedder):
     def to_vw_format(
         self, inputs: Dict[str, Any], slates_label: Optional[Label] = None
     ) -> str:
-        named_actions = inputs.get("named_actions", None)
-        if named_actions is None:
-            raise ValueError("named_actions must be provided")
-
-        action_features = self.featurize(named_actions)
+        action_features = self.to_action_features(inputs)
         context = [f'slates shared {-1.*slates_label.r if slates_label else ""} |']
         actions = chain.from_iterable(
             [
@@ -94,15 +94,6 @@ class SlatesTextEmbedder(base.Embedder):
         )
         slots = [f"slates slot {p} |" for p in ps]
         return "\n".join(list(chain.from_iterable([context, actions, slots])))
-
-    def to_action_features(self, inputs: Dict[str, Any]):
-        named_actions = inputs.get("named_actions", None)
-        if named_actions is None:
-            raise ValueError("named_actions must be provided")
-
-        action_features = self.featurize(named_actions)
-        return action_features
-
 
 class Policy(ABC):
     @abstractmethod
