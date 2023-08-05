@@ -56,13 +56,6 @@ class SlatesTextEmbedder(base.Embedder):
         self.model = model
 
     def featurize(self, raw_actions: Dict[str, List[str]]):
-        # Build action embeddings
-        actions = []
-        actions_map = []
-        for (k, v) in raw_actions.items():
-            actions.append(v)
-            actions_map.append(k)
-
         def _str(embedding):
             return " ".join([f"{i}:{e}" for i, e in enumerate(embedding)])
 
@@ -73,10 +66,10 @@ class SlatesTextEmbedder(base.Embedder):
                 else action.replace(" ", "_")
                 for action in slot
             ]
-            for slot in actions
+            for slot in raw_actions.values()
         ]
 
-        return actions, actions_map, action_features
+        return action_features
 
     def to_vw_format(self, inputs: Dict[str, Any]) -> str:
         slates_label = inputs.get("slates_label", None)
@@ -84,7 +77,7 @@ class SlatesTextEmbedder(base.Embedder):
         if named_actions is None:
             raise ValueError("named_actions must be provided")
 
-        actions, actions_map, action_features = self.featurize(named_actions)
+        action_features = self.featurize(named_actions)
         context = [f'slates shared {-1.*slates_label.r if slates_label else ""} |']
         actions = chain.from_iterable(
             [
@@ -106,7 +99,7 @@ class SlatesTextEmbedder(base.Embedder):
         if named_actions is None:
             raise ValueError("named_actions must be provided")
 
-        _, _, action_features = self.featurize(named_actions)
+        action_features = self.featurize(named_actions)
         return action_features
 
 
@@ -225,7 +218,7 @@ class SlatesPersonalizerChain(base.RLChain):
         self.text_embedder = (
             SlatesTextEmbedder() if self.text_embedder is None else self.text_embedder
         )
-        self.policy = policy(self.workspace, self.text_embedder)
+        self.policy = policy(workspace=self.workspace, text_embedder=self.text_embedder)
 
     @property
     def input_keys(self) -> List[str]:
