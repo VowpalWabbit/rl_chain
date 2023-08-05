@@ -71,8 +71,9 @@ class SlatesTextEmbedder(base.Embedder):
 
         return action_features
 
-    def to_vw_format(self, inputs: Dict[str, Any]) -> str:
-        slates_label = inputs.get("slates_label", None)
+    def to_vw_format(
+        self, inputs: Dict[str, Any], slates_label: Optional[Label] = None
+    ) -> str:
         named_actions = inputs.get("named_actions", None)
         if named_actions is None:
             raise ValueError("named_actions must be provided")
@@ -255,8 +256,9 @@ class SlatesPersonalizerChain(base.RLChain):
                 )
                 self._reward.append(label.r)
 
-                inputs["slates_label"] = label if label else None
-                vw_ex = self.text_embedder.to_vw_format(inputs)
+                vw_ex = self.text_embedder.to_vw_format(
+                    inputs=inputs, slates_label=label
+                )
                 self._learn(vw_ex)
 
             except Exception as e:
