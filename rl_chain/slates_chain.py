@@ -82,8 +82,8 @@ class SlatesTextEmbedder(base.Embedder):
     ) -> str:
         action_features = self.to_action_features(inputs, actions)
 
-        reward = -1.0 * slates_label.r if slates_label else ""
-        context_str = f"slates shared {reward} "
+        cost = -1.0 * slates_label.r if slates_label else ""
+        context_str = f"slates shared {cost} "
 
         if context:
             embedded_context = base.embed(context, self.model)
