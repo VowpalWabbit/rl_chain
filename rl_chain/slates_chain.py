@@ -112,50 +112,47 @@ class SlatesTextEmbedder(base.Embedder):
 
 class Policy(ABC):
     @abstractmethod
-    def predict(
-        self, text_embedder: SlatesTextEmbedder, inputs: Dict[str, Any]
-    ) -> Label:
+    def predict(self, inputs: Dict[str, Any]) -> Label:
         ...
 
 
 class VwPolicy(Policy):
-    def __init__(self, workspace: vw.Workspace, *_, **__):
+    def __init__(
+        self, workspace: vw.Workspace, text_embedder: SlatesTextEmbedder, *_, **__
+    ):
         self.workspace = workspace
+        self.text_embedder = text_embedder
 
-    def predict(
-        self, text_embedder: SlatesTextEmbedder, inputs: Dict[str, Any]
-    ) -> Label:
+    def predict(self, inputs: Dict[str, Any]) -> Label:
         text_parser = vw.TextFormatParser(self.workspace)
         return Label(
             self.workspace.predict_one(
-                base.parse_lines(text_parser, text_embedder.to_vw_format(inputs))
+                base.parse_lines(text_parser, self.text_embedder.to_vw_format(inputs))
             )
         )
 
 
 class RandomPolicy(Policy):
-    def __init__(self, *_, **__):
-        ...
+    def __init__(self, text_embedder: SlatesTextEmbedder, *_, **__):
+        self.text_embedder = text_embedder
 
-    def predict(
-        self, text_embedder: SlatesTextEmbedder, inputs: Dict[str, Any]
-    ) -> Label:
+    def predict(self, inputs: Dict[str, Any]) -> Label:
         return Label(
             [
                 [(random.randint(0, len(slot) - 1), 1.0 / len(slot))]
-                for slot in text_embedder.to_action_features(inputs)
+                for slot in self.text_embedder.to_action_features(inputs)
             ]
         )
 
 
 class FirstChoicePolicy(Policy):
-    def __init__(self, *_, **__):
-        ...
+    def __init__(self, text_embedder: SlatesTextEmbedder, *_, **__):
+        self.text_embedder = text_embedder
 
-    def predict(
-        self, text_embedder: SlatesTextEmbedder, inputs: Dict[str, Any]
-    ) -> Label:
-        return Label([[(0, 1)] for slot in text_embedder.to_action_features(inputs)])
+    def predict(self, inputs: Dict[str, Any]) -> Label:
+        return Label(
+            [[(0, 1)] for slot in self.text_embedder.to_action_features(inputs)]
+        )
 
 
 class LLMResponseValidatorForSlates(base.ResponseValidator):
@@ -228,7 +225,7 @@ class SlatesPersonalizerChain(base.RLChain):
         self.text_embedder = (
             SlatesTextEmbedder() if self.text_embedder is None else self.text_embedder
         )
-        self.policy = policy(self.workspace)
+        self.policy = policy(self.workspace, self.text_embedder)
 
     @property
     def input_keys(self) -> List[str]:
@@ -250,7 +247,7 @@ class SlatesPersonalizerChain(base.RLChain):
         }
 
         inputs["named_actions"] = named_actions
-        label = self.policy.predict(self.text_embedder, inputs)
+        label = self.policy.predict(inputs=inputs)
 
         preds = {}
         for i, (j, a) in enumerate(zip(label.chosen, named_actions.values())):
