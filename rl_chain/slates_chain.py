@@ -55,9 +55,7 @@ class SlatesTextEmbedder(base.Embedder):
 
         self.model = model
 
-    def to_action_features(
-        self, inputs: Dict[str, List[str]], actions: Dict[str, Any]
-    ):
+    def to_action_features(self, actions: Dict[str, Any]):
         def _str(embedding):
             return " ".join([f"{i}:{e}" for i, e in enumerate(embedding)])
 
@@ -80,7 +78,7 @@ class SlatesTextEmbedder(base.Embedder):
         context: Optional[Dict[str, Any]] = None,
         slates_label: Optional[Label] = None,
     ) -> str:
-        action_features = self.to_action_features(inputs, actions)
+        action_features = self.to_action_features(actions)
 
         cost = -1.0 * slates_label.r if slates_label else ""
         context_str = f"slates shared {cost} "
@@ -152,7 +150,7 @@ class RandomPolicy(Policy):
         return Label(
             [
                 [(random.randint(0, len(slot) - 1), 1.0 / len(slot))]
-                for slot in self.text_embedder.to_action_features(inputs, actions)
+                for slot in self.text_embedder.to_action_features(actions)
             ]
         )
 
@@ -167,7 +165,7 @@ class FirstChoicePolicy(Policy):
         return Label(
             [
                 [(0, 1)]
-                for slot in self.text_embedder.to_action_features(inputs, actions)
+                for slot in self.text_embedder.to_action_features(actions)
             ]
         )
 
