@@ -26,28 +26,14 @@ ch.setLevel(logging.INFO)
 logger.addHandler(ch)
 
 
-class _Embed:
-    def __init__(self, value):
-        self.value = value
-
-    def __str__(self):
-        return self.value
-
-
-def Embed(anything):
-    if isinstance(anything, list):
-        return [Embed(v) for v in anything]
-    elif isinstance(anything, dict):
-        return {k: _Embed(v) for k, v in anything.items()}
-    return _Embed(anything)
-
-
 class _BasedOn:
     def __init__(self, value):
         self.value = value
 
-    def __value__(self):
-        return self.value
+    def __str__(self):
+        return str(self.value)
+
+    __repr__ = __str__
 
 
 def BasedOn(anything):
@@ -58,14 +44,38 @@ class _ToSelectFrom:
     def __init__(self, value):
         self.value = value
 
-    def __value__(self):
-        return self.value
+    def __str__(self):
+        return str(self.value)
+
+    __repr__ = __str__
 
 
 def ToSelectFrom(anything):
     if not isinstance(anything, list):
         raise ValueError("ToSelectFrom must be a list to select from")
     return _ToSelectFrom(anything)
+
+
+class _Embed:
+    def __init__(self, value):
+        self.value = value
+
+    def __str__(self):
+        return str(self.value)
+
+    __repr__ = __str__
+
+
+def Embed(anything):
+    if isinstance(anything, _ToSelectFrom):
+        return ToSelectFrom(Embed(anything.value))
+    elif isinstance(anything, _BasedOn):
+        return BasedOn(Embed(anything.value))
+    if isinstance(anything, list):
+        return [Embed(v) for v in anything]
+    elif isinstance(anything, dict):
+        return {k: _Embed(v) for k, v in anything.items()}
+    return _Embed(anything)
 
 
 def parse_lines(parser: vw.TextFormatParser, input_str: str) -> List[vw.Example]:
@@ -111,7 +121,6 @@ class RLChain(Chain):
     response_validator: Optional[ResponseValidator] = None
     vw_logger: VwLogger = None
 
-    context: str = "context"  #: :meta private:
     output_key: str = "result"  #: :meta private:
     prompt: PromptTemplate
 
@@ -164,14 +173,6 @@ class RLChain(Chain):
 
         extra = Extra.forbid
         arbitrary_types_allowed = True
-
-    @property
-    def input_keys(self) -> List[str]:
-        """Expect input key.
-
-        :meta private:
-        """
-        return [self.context]
 
     @property
     def output_keys(self) -> List[str]:

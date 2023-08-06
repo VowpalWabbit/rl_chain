@@ -13,7 +13,6 @@ from langchain.chains.base import Chain
 import vowpal_wabbit_next as vw
 from typing import Any, Dict, List, Optional, Tuple, Union
 
-from .pick_best_prompt import PROMPT
 import numpy as np
 from langchain.base_language import BaseLanguageModel
 from langchain.chains.llm import LLMChain
@@ -57,7 +56,11 @@ class ContextualBanditTextEmbedder(base.Embedder):
         return base.embed(context, self.model, "Context")
 
     def to_vw_format(
-        self, inputs: Dict[str, Any], cb_label: Optional[Tuple] = None
+        self,
+        inputs: Dict[str, Any],
+        actions: List[Any],
+        context: Dict[str, Any],
+        cb_label: Optional[Tuple] = None,
     ) -> str:
         """
         Converts the context and actions into a format that can be used by VW
@@ -73,9 +76,6 @@ class ContextualBanditTextEmbedder(base.Embedder):
 
         if cb_label:
             chosen_action, cost, prob = cb_label
-
-        context = inputs.get("context")
-        actions = inputs.get("actions")
 
         context_emb = self.embed_context(context) if context else None
         action_embs = self.embed_actions(actions) if actions else None
@@ -113,7 +113,7 @@ class AutoValidatePickBest(base.ResponseValidator):
             template = "PLEASE RESPOND ONLY WITH A SIGNLE FLOAT AND NO OTHER TEXT EXPLANATION\n You are a strict judge that is called on to rank a response based on given criteria.\
                 You must respond with your ranking by providing a single float within the range [-1, 1], -1 being very bad response and 1 being very good response."
             system_message_prompt = SystemMessagePromptTemplate.from_template(template)
-            human_template = 'Given this context "{context}" as the most important attribute, rank how good or bad this text selection is: "{selected}".'
+            human_template = 'Given this context "{best_pick_context}" as the most important attribute, rank how good or bad this text selection is: "{best_pick}".'
             human_message_prompt = HumanMessagePromptTemplate.from_template(
                 human_template
             )
@@ -128,9 +128,9 @@ class AutoValidatePickBest(base.ResponseValidator):
     def grade_response(
         self, inputs: Dict[str, Any], llm_response: str, **kwargs
     ) -> float:
-        inputs["llm_response"] = llm_response
-        inputs["selected"] = inputs["selected"]
-        ranking = self.llm_chain.predict(**inputs)
+        next_call_inputs = inputs.copy()
+        next_call_inputs["llm_response"] = llm_response
+        ranking = self.llm_chain.predict(**next_call_inputs)
         ranking = ranking.strip()
         try:
             resp = float(ranking)
@@ -159,10 +159,11 @@ class PickBest(base.RLChain):
     - The response is returned
 
     input dictionary expects:
-        - context: (str, required) The context to use for personalization
-        - actions: (List, required) The list of actions for the Vowpal Wabbit model to choose from. This list can either be a List of str's or a List of Dict's.
+        - at least one variable wrapped in BasedOn which will be the context to use for personalization
+        - one variable of a list wrapped in ToSelectFrom which will be the list of actions for the Vowpal Wabbit model to choose from.
+            This list can either be a List of str's or a List of Dict's.
                 - Actions provided as a list of strings e.g. actions = ["action1", "action2", "action3"]
-                - If actions are provided as a list of dictionaries, each action should be a dictionary where the keys are namespace names and the values are the corresponding action strings e.g. actions = [{"namespace1": "action1", "namespace2": "action2"}, {"namespace1": "action3", "namespace2": "action4"}]    
+                - If actions are provided as a list of dictionaries, each action should be a dictionary where the keys are namespace names and the values are the corresponding action strings e.g. actions = [{"namespace1": "action1", "namespace2": "action2"}, {"namespace1": "action3", "namespace2": "action4"}]
     Extends:
         RLChain
 
@@ -187,7 +188,6 @@ class PickBest(base.RLChain):
     text_embedder: ContextualBanditTextEmbedder = ContextualBanditTextEmbedder(
         "bert-base-nli-mean-tokens"
     )
-    actions: str = "actions"  #: :meta private:
 
     def __init__(self, *args, **kwargs):
         vw_cmd = kwargs.get("vw_cmd", [])
@@ -215,7 +215,48 @@ class PickBest(base.RLChain):
 
         :meta private:
         """
-        return [self.actions, self.context]
+        return []
+
+    def _get_context_and_actions(self, inputs: Dict[str, Any]):
+        named_actions = {
+            k: inputs[k].value
+            for k in inputs.keys()
+            if isinstance(inputs[k], base._ToSelectFrom)
+        }
+
+        if not named_actions:
+            raise ValueError(
+                "No variables using 'ToSelectFrom' found in the inputs. Please include at least one variable containing a list to select from."
+            )
+
+        actions = list(named_actions.values())
+        if len(actions) > 1:
+            raise ValueError(
+                "Only one variable using 'ToSelectFrom' can be provided in the inputs for the PickBest chain. Please provide only one variable containing a list to select from."
+            )
+        actions = actions[0]
+
+        context = {
+            k: inputs[k].value
+            if isinstance(inputs[k].value, list)
+            else [inputs[k].value]
+            for k in inputs.keys()
+            if isinstance(inputs[k], base._BasedOn)
+        }
+
+        if not context:
+            raise ValueError(
+                "No variables using 'BasedOn' found in the inputs. Please include at least one variable containing information to base the selection of ToSelectFrom on."
+            )
+
+        return context, actions
+
+    def _validate_inputs(self, inputs: Dict[str, Any]) -> None:
+        super()._validate_inputs(inputs)
+        if "best_pick" in inputs.keys() or "best_pick_context" in inputs.keys():
+            raise ValueError(
+                "The PickBest chain does not accept 'best_pick' or 'best_pick_context' as input keys, they are reserved for internal use, but they can be used in the user provided prompt."
+            )
 
     def _call(
         self,
@@ -223,10 +264,10 @@ class PickBest(base.RLChain):
         run_manager: Optional[CallbackManagerForChainRun] = None,
     ) -> Dict[str, Any]:
         """
-        When chain.run() is called with the given inputs, this function is called. It is responsible for calling the VW model to choose an action based on the `context`, and then calling the LLM (Language Model) with the chosen action to generate a response.
+        When chain.run() is called with the given inputs, this function is called. It is responsible for calling the VW model to choose an action (ToSelectFrom) based on the (BasedOn) context, and then calling the LLM (Language Model) with the chosen action to generate a response.
 
         Attributes:
-            inputs: (Dict, required) The inputs to the chain. The inputs must contain a keys `context` and `actions`. That is the context to be used for selecting an action that will be passed to the LLM prompt.
+            inputs: (Dict, required) The inputs to the chain. The inputs must contain a input variables that are wrapped in BasedOn and ToSelectFrom. BasedOn is the context that will be used for selecting an ToSelectFrom action that will be passed to the LLM prompt.
             run_manager: (CallbackManagerForChainRun, optional) The callback manager to use for this run. If not provided, a default callback manager is used.
             
         Returns:
@@ -236,14 +277,16 @@ class PickBest(base.RLChain):
                     - the `cost` in the `response_result` object is set to None if an automatic response_validator is not provided or if the response_validator failed (e.g. LLM timeout or LLM failed to rank correctly).
         """
         _run_manager = run_manager or CallbackManagerForChainRun.get_noop_manager()
-
         if self.workspace is None:
             raise RuntimeError("Workspace must be set before calling the chain")
-
         text_parser = vw.TextFormatParser(self.workspace)
 
-        actions = inputs[self.actions]
-        vw_ex = self.text_embedder.to_vw_format(inputs=inputs)
+        context, actions = self._get_context_and_actions(inputs=inputs)
+
+        vw_ex = self.text_embedder.to_vw_format(
+            inputs=inputs, actions=actions, context=context
+        )
+
         multi_ex = base.parse_lines(text_parser, vw_ex)
         preds: List[Tuple[int, float]] = self.workspace.predict_one(multi_ex)
         prob_sum = sum(prob for _, prob in preds)
@@ -256,24 +299,25 @@ class PickBest(base.RLChain):
         sampled_prob = sampled_ap[1]
 
         pred_action = actions[sampled_action]
-        inputs["selected"] = pred_action
 
-        llm_resp: Dict[str, Any] = super()._call(run_manager=run_manager, inputs=inputs)
-
-        # llm_resp: Dict[str, Any] = {self.output_key : ""}
-
+        next_call_inputs = inputs.copy()
+        next_call_inputs["best_pick"] = pred_action
+        llm_resp: Dict[str, Any] = super()._call(
+            run_manager=run_manager, inputs=next_call_inputs
+        )
         latest_cost = None
 
         if self.response_validator:
             try:
+                next_call_inputs["best_pick_context"] = str(context)
                 cost = -1.0 * self.response_validator.grade_response(
-                    inputs=inputs, llm_response=llm_resp[self.output_key]
+                    inputs=next_call_inputs, llm_response=llm_resp[self.output_key]
                 )
                 latest_cost = cost
                 cb_label = (sampled_action, cost, sampled_prob)
 
                 vw_ex = self.text_embedder.to_vw_format(
-                    cb_label=cb_label, inputs=inputs
+                    cb_label=cb_label, inputs=inputs, actions=actions, context=context
                 )
                 self._learn(vw_ex)
 
@@ -298,18 +342,18 @@ class PickBest(base.RLChain):
 
     @property
     def _chain_type(self) -> str:
-        return "llm_personalizer_chain"
+        return "rl_pick_best_chain"
 
     @classmethod
-    def from_chain(
-        cls, llm_chain: Chain, prompt: PromptTemplate = PROMPT, **kwargs: Any
-    ):
+    def from_chain(cls, llm_chain: Chain, prompt: PromptTemplate, **kwargs: Any):
+        if "best_pick" not in prompt.input_variables:
+            base.logger.warning(
+                "The prompt does not contain an input variable named 'best_pick'. The best pick from the `ToSelectFrom` options will be set in the `best_pick` prompt input variable."
+            )
         return PickBest(llm_chain=llm_chain, prompt=prompt, **kwargs)
 
     @classmethod
-    def from_llm(
-        cls, llm: BaseLanguageModel, prompt: PromptTemplate = PROMPT, **kwargs: Any
-    ):
+    def from_llm(cls, llm: BaseLanguageModel, prompt: PromptTemplate, **kwargs: Any):
         llm_chain = LLMChain(llm=llm, prompt=prompt)
         return PickBest.from_chain(llm_chain=llm_chain, prompt=prompt, **kwargs)
 
@@ -333,7 +377,13 @@ class PickBest(base.RLChain):
             response_result.chosen_action_probability,
         )
 
+        inputs = response_result.inputs
+        context, actions = self._get_context_and_actions(inputs=inputs)
+
         vw_ex = self.text_embedder.to_vw_format(
-            cb_label=cb_label, inputs=response_result.inputs
+            cb_label=cb_label,
+            inputs=response_result.inputs,
+            actions=actions,
+            context=context,
         )
         self._learn(vw_ex)

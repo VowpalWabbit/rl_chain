@@ -163,10 +163,7 @@ class FirstChoicePolicy(Policy):
         self, inputs: Dict[str, Any], actions: Dict[str, Any], context: Dict[str, Any]
     ) -> Label:
         return Label(
-            [
-                [(0, 1)]
-                for slot in self.text_embedder.to_action_features(actions)
-            ]
+            [[(0, 1)] for slot in self.text_embedder.to_action_features(actions)]
         )
 
 
@@ -241,14 +238,6 @@ class SlatesPersonalizerChain(base.RLChain):
             SlatesTextEmbedder() if self.text_embedder is None else self.text_embedder
         )
         self.policy = policy(workspace=self.workspace, text_embedder=self.text_embedder)
-
-    @property
-    def input_keys(self) -> List[str]:
-        """Expect input key.
-
-        :meta private:
-        """
-        return []
 
     def _call(
         self,
