@@ -30,7 +30,7 @@ class ContextualBanditTextEmbedder(base.Embedder):
 
     def __init__(self, model_name: Optional[str] = None):
         if not model_name:
-            self.model = None
+            self.model = SentenceTransformer("bert-base-nli-mean-tokens")
         else:
             self.model = SentenceTransformer(model_name)
 
