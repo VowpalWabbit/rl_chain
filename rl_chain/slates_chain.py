@@ -55,31 +55,44 @@ class SlatesTextEmbedder(base.Embedder):
 
         self.model = model
 
-    def to_action_features(self, inputs: Dict[str, List[str]]):
+    def to_action_features(self, actions: Dict[str, Any]):
         def _str(embedding):
             return " ".join([f"{i}:{e}" for i, e in enumerate(embedding)])
 
-        named_actions = inputs.get("named_actions", None)
-        if named_actions is None:
-            raise ValueError("named_actions must be provided")
-
         action_features = [
             [
-                _str(self.model.encode(action.impl))
+                _str(self.model.encode(action.value))
                 if isinstance(action, base._Embed)
                 else action.replace(" ", "_")
                 for action in slot
             ]
-            for slot in named_actions.values()
+            for slot in actions.values()
         ]
 
         return action_features
 
     def to_vw_format(
-        self, inputs: Dict[str, Any], slates_label: Optional[Label] = None
+        self,
+        inputs: Dict[str, Any],
+        actions: Dict[str, Any],
+        context: Optional[Dict[str, Any]] = None,
+        slates_label: Optional[Label] = None,
     ) -> str:
-        action_features = self.to_action_features(inputs)
-        context = [f'slates shared {-1.*slates_label.r if slates_label else ""} |']
+        action_features = self.to_action_features(actions)
+
+        cost = -1.0 * slates_label.r if slates_label else ""
+        context_str = f"slates shared {cost} "
+
+        if context:
+            embedded_context = base.embed(context, self.model)
+            for context_item in embedded_context:
+                for ns, ctx in context_item.items():
+                    context_str += (
+                        f"|{ns} {' '.join(ctx) if isinstance(ctx, list) else ctx} "
+                    )
+        else:
+            context_str += "|"  # empty context
+
         actions = chain.from_iterable(
             [
                 [f"slates action {i} |Action {action}"]
@@ -93,11 +106,14 @@ class SlatesTextEmbedder(base.Embedder):
             else [""] * len(action_features)
         )
         slots = [f"slates slot {p} |" for p in ps]
-        return "\n".join(list(chain.from_iterable([context, actions, slots])))
+        return "\n".join(list(chain.from_iterable([[context_str], actions, slots])))
+
 
 class Policy(ABC):
     @abstractmethod
-    def predict(self, inputs: Dict[str, Any]) -> Label:
+    def predict(
+        self, inputs: Dict[str, Any], actions: Dict[str, Any], context: Dict[str, Any]
+    ) -> Label:
         ...
 
 
@@ -108,11 +124,18 @@ class VwPolicy(Policy):
         self.workspace = workspace
         self.text_embedder = text_embedder
 
-    def predict(self, inputs: Dict[str, Any]) -> Label:
+    def predict(
+        self, inputs: Dict[str, Any], actions: Dict[str, Any], context: Dict[str, Any]
+    ) -> Label:
         text_parser = vw.TextFormatParser(self.workspace)
         return Label(
             self.workspace.predict_one(
-                base.parse_lines(text_parser, self.text_embedder.to_vw_format(inputs))
+                base.parse_lines(
+                    text_parser,
+                    self.text_embedder.to_vw_format(
+                        inputs=inputs, actions=actions, context=context
+                    ),
+                )
             )
         )
 
@@ -121,11 +144,13 @@ class RandomPolicy(Policy):
     def __init__(self, text_embedder: SlatesTextEmbedder, *_, **__):
         self.text_embedder = text_embedder
 
-    def predict(self, inputs: Dict[str, Any]) -> Label:
+    def predict(
+        self, inputs: Dict[str, Any], actions: Dict[str, Any], context: Dict[str, Any]
+    ) -> Label:
         return Label(
             [
                 [(random.randint(0, len(slot) - 1), 1.0 / len(slot))]
-                for slot in self.text_embedder.to_action_features(inputs)
+                for slot in self.text_embedder.to_action_features(actions)
             ]
         )
 
@@ -134,9 +159,14 @@ class FirstChoicePolicy(Policy):
     def __init__(self, text_embedder: SlatesTextEmbedder, *_, **__):
         self.text_embedder = text_embedder
 
-    def predict(self, inputs: Dict[str, Any]) -> Label:
+    def predict(
+        self, inputs: Dict[str, Any], actions: Dict[str, Any], context: Dict[str, Any]
+    ) -> Label:
         return Label(
-            [[(0, 1)] for slot in self.text_embedder.to_action_features(inputs)]
+            [
+                [(0, 1)]
+                for slot in self.text_embedder.to_action_features(actions)
+            ]
         )
 
 
@@ -196,7 +226,7 @@ class SlatesPersonalizerChain(base.RLChain):
             vw_cmd = [
                 "--slates",
                 "--quiet",
-                "--interactions=AC",
+                "--interactions=::",
                 "--coin",
                 "--squarecb",
             ]
@@ -227,18 +257,40 @@ class SlatesPersonalizerChain(base.RLChain):
     ) -> Dict[str, str]:
 
         named_actions = {
-            k: inputs[k] if isinstance(inputs[k], list) else [inputs[k]]
-            for k in self.llm_chain.prompt.input_variables
+            k: inputs[k].value
+            for k in inputs.keys()
+            if isinstance(inputs[k], base._ToSelectFrom)
         }
 
-        inputs["named_actions"] = named_actions
-        label = self.policy.predict(inputs=inputs)
+        if not named_actions:
+            raise ValueError(
+                "No variables using 'ToSelectFrom' found in the inputs. Please include at least one variable containing a list to select from."
+            )
+
+        context = {
+            k: inputs[k].value
+            if isinstance(inputs[k].value, list)
+            else [inputs[k].value]
+            for k in inputs.keys()
+            if isinstance(inputs[k], base._BasedOn)
+        }
+
+        label = self.policy.predict(
+            inputs=inputs, context=context, actions=named_actions
+        )
 
         preds = {}
         for i, (j, a) in enumerate(zip(label.chosen, named_actions.values())):
             preds[list(named_actions.keys())[i]] = str(a[j])
 
-        llm_resp = super()._call(run_manager=run_manager, inputs=preds)
+        inputs.update(preds)
+
+        # need to clean up the BasedOn inputs in case they need to be used in the prompt
+        for k in inputs.keys():
+            if isinstance(inputs[k], base._BasedOn):
+                inputs[k] = inputs[k].value
+
+        llm_resp = super()._call(run_manager=run_manager, inputs=inputs)
 
         if self.response_validator:
             try:
@@ -248,7 +300,10 @@ class SlatesPersonalizerChain(base.RLChain):
                 self._reward.append(label.r)
 
                 vw_ex = self.text_embedder.to_vw_format(
-                    inputs=inputs, slates_label=label
+                    inputs=inputs,
+                    actions=named_actions,
+                    context=context,
+                    slates_label=label,
                 )
                 self._learn(vw_ex)
 
