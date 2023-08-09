@@ -105,21 +105,22 @@ class ContextualBanditTextEmbedder(base.Embedder):
 class AutoValidatePickBest(base.ResponseValidator):
     llm_chain: LLMChain
     prompt: PromptTemplate
+    default_system_prompt = SystemMessagePromptTemplate.from_template(
+        "PLEASE RESPOND ONLY WITH A SIGNLE FLOAT AND NO OTHER TEXT EXPLANATION\n You are a strict judge that is called on to rank a response based on given criteria.\
+                You must respond with your ranking by providing a single float within the range [-1, 1], -1 being very bad response and 1 being very good response."
+    )
 
     def __init__(self, llm, prompt=None):
         if prompt:
             self.prompt = prompt
         else:
-            template = "PLEASE RESPOND ONLY WITH A SIGNLE FLOAT AND NO OTHER TEXT EXPLANATION\n You are a strict judge that is called on to rank a response based on given criteria.\
-                You must respond with your ranking by providing a single float within the range [-1, 1], -1 being very bad response and 1 being very good response."
-            system_message_prompt = SystemMessagePromptTemplate.from_template(template)
             human_template = 'Given this context "{best_pick_context}" as the most important attribute, rank how good or bad this text selection is: "{best_pick}".'
             human_message_prompt = HumanMessagePromptTemplate.from_template(
                 human_template
             )
 
             chat_prompt = ChatPromptTemplate.from_messages(
-                [system_message_prompt, human_message_prompt]
+                [AutoValidatePickBest.default_system_prompt, human_message_prompt]
             )
             self.prompt = chat_prompt
 
@@ -128,16 +129,16 @@ class AutoValidatePickBest(base.ResponseValidator):
     def grade_response(
         self, inputs: Dict[str, Any], llm_response: str, **kwargs
     ) -> float:
-        next_call_inputs = inputs.copy()
-        next_call_inputs["llm_response"] = llm_response
-        ranking = self.llm_chain.predict(**next_call_inputs)
+        next_chain_inputs = inputs.copy()
+        next_chain_inputs["llm_response"] = llm_response
+        ranking = self.llm_chain.predict(**next_chain_inputs)
         ranking = ranking.strip()
         try:
             resp = float(ranking)
             return resp
-        except Exception:
+        except Exception as e:
             raise RuntimeError(
-                "The llm did not manage to rank the response as expected, there is always the option to try again"
+                f"The llm did not manage to rank the response as expected, there is always the option to try again or tweak the reward prompt. Error: {e}"
             )
 
 
@@ -188,6 +189,8 @@ class PickBest(base.RLChain):
     text_embedder: ContextualBanditTextEmbedder = ContextualBanditTextEmbedder(
         "bert-base-nli-mean-tokens"
     )
+    best_pick_input_key = "best_pick"
+    best_pick_context_input_key = "best_pick_context"
 
     def __init__(self, *args, **kwargs):
         vw_cmd = kwargs.get("vw_cmd", [])
@@ -216,6 +219,17 @@ class PickBest(base.RLChain):
         :meta private:
         """
         return []
+
+    def _get_action_variable_name(self, inputs: Dict[str, Any]) -> str:
+        avr_name = None
+        for avr in inputs.keys():
+            if isinstance(inputs[avr], base._ToSelectFrom):
+                avr_name = avr
+        if avr_name is None:
+            raise ValueError(
+                "No variables using 'ToSelectFrom' found in the inputs. Please include at least one variable containing a list to select from."
+            )
+        return avr_name
 
     def _get_context_and_actions(self, inputs: Dict[str, Any]):
         named_actions = {
@@ -253,9 +267,12 @@ class PickBest(base.RLChain):
 
     def _validate_inputs(self, inputs: Dict[str, Any]) -> None:
         super()._validate_inputs(inputs)
-        if "best_pick" in inputs.keys() or "best_pick_context" in inputs.keys():
+        if (
+            self.best_pick_input_key in inputs.keys()
+            or self.best_pick_context_input_key in inputs.keys()
+        ):
             raise ValueError(
-                "The PickBest chain does not accept 'best_pick' or 'best_pick_context' as input keys, they are reserved for internal use, but they can be used in the user provided prompt."
+                f"The PickBest chain does not accept '{self.best_pick_input_key}' or '{self.best_pick_context_input_key}' as input keys, they are reserved for internal use during auto reward."
             )
 
     def _call(
@@ -282,6 +299,7 @@ class PickBest(base.RLChain):
         text_parser = vw.TextFormatParser(self.workspace)
 
         context, actions = self._get_context_and_actions(inputs=inputs)
+        action_variable_name = self._get_action_variable_name(inputs=inputs)
 
         vw_ex = self.text_embedder.to_vw_format(
             inputs=inputs, actions=actions, context=context
@@ -300,18 +318,24 @@ class PickBest(base.RLChain):
 
         pred_action = actions[sampled_action]
 
-        next_call_inputs = inputs.copy()
-        next_call_inputs["best_pick"] = pred_action
+        next_chain_inputs = inputs.copy()
+        next_chain_inputs.update({action_variable_name: pred_action})
+
         llm_resp: Dict[str, Any] = super()._call(
-            run_manager=run_manager, inputs=next_call_inputs
+            run_manager=run_manager, inputs=next_chain_inputs
         )
         latest_cost = None
 
         if self.response_validator:
             try:
-                next_call_inputs["best_pick_context"] = str(context)
+                next_chain_inputs.update(
+                    {
+                        self.best_pick_context_input_key: str(context),
+                        self.best_pick_input_key: pred_action,
+                    }
+                )
                 cost = -1.0 * self.response_validator.grade_response(
-                    inputs=next_call_inputs, llm_response=llm_resp[self.output_key]
+                    inputs=next_chain_inputs, llm_response=llm_resp[self.output_key]
                 )
                 latest_cost = cost
                 cb_label = (sampled_action, cost, sampled_prob)
@@ -346,10 +370,6 @@ class PickBest(base.RLChain):
 
     @classmethod
     def from_chain(cls, llm_chain: Chain, prompt: PromptTemplate, **kwargs: Any):
-        if "best_pick" not in prompt.input_variables:
-            base.logger.warning(
-                "The prompt does not contain an input variable named 'best_pick'. The best pick from the `ToSelectFrom` options will be set in the `best_pick` prompt input variable."
-            )
         return PickBest(llm_chain=llm_chain, prompt=prompt, **kwargs)
 
     @classmethod
