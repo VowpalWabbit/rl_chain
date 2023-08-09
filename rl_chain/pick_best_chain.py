@@ -356,7 +356,7 @@ class PickBest(base.RLChain):
 
     @property
     def _chain_type(self) -> str:
-        return "rl_pick_best_chain"
+        return "llm_rl_chain_pick_best_chain"
 
     @classmethod
     def from_chain(cls, llm_chain: Chain, prompt: PromptTemplate, **kwargs: Any):
