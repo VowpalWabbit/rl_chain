@@ -129,9 +129,7 @@ class AutoValidatePickBest(base.ResponseValidator):
     def grade_response(
         self, inputs: Dict[str, Any], llm_response: str, **kwargs
     ) -> float:
-        next_chain_inputs = inputs.copy()
-        next_chain_inputs["llm_response"] = llm_response
-        ranking = self.llm_chain.predict(**next_chain_inputs)
+        ranking = self.llm_chain.predict(llm_response=llm_response, **inputs)
         ranking = ranking.strip()
         try:
             resp = float(ranking)
