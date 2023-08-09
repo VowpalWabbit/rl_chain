@@ -212,14 +212,6 @@ class PickBest(base.RLChain):
 
         super().__init__(*args, **kwargs)
 
-    @property
-    def input_keys(self) -> List[str]:
-        """Expect input key.
-
-        :meta private:
-        """
-        return []
-
     def _get_action_variable_name(self, inputs: Dict[str, Any]) -> str:
         avr_name = None
         for avr in inputs.keys():
