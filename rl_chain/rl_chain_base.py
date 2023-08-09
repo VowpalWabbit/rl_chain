@@ -173,7 +173,7 @@ class RLChain(Chain):
 
         extra = Extra.forbid
         arbitrary_types_allowed = True
-    
+
     @property
     def input_keys(self) -> List[str]:
         """Expect input key.

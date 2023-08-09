@@ -213,15 +213,13 @@ class PickBest(base.RLChain):
         super().__init__(*args, **kwargs)
 
     def _get_action_variable_name(self, inputs: Dict[str, Any]) -> str:
-        avr_name = None
         for avr in inputs.keys():
             if isinstance(inputs[avr], base._ToSelectFrom):
-                avr_name = avr
-        if avr_name is None:
+                return avr
+        else:
             raise ValueError(
                 "No variables using 'ToSelectFrom' found in the inputs. Please include at least one variable containing a list to select from."
             )
-        return avr_name
 
     def _get_context_and_actions(self, inputs: Dict[str, Any]):
         named_actions = {
