@@ -82,9 +82,56 @@ def parse_lines(parser: vw.TextFormatParser, input_str: str) -> List[vw.Example]
     return [parser.parse_line(line) for line in input_str.split("\n")]
 
 
+class Label(ABC):
+    pass
+
+
+class Event(ABC):
+    inputs: Dict[str, Any]
+    label: Optional[Label]
+
+class Policy(ABC):
+    @abstractmethod
+    def predict(
+        self, inputs: Dict[str, Any], actions: Dict[str, Any], context: Dict[str, Any]
+    ) -> Any:
+        pass
+
+
+class VwPolicy(Policy):
+    def __init__(
+        self,
+        workspace: vw.Workspace,
+        text_embedder: Embedder,
+        logger: VwLogger,
+        *_,
+        **__,
+    ):
+        self.workspace = workspace
+        self.text_embedder = text_embedder
+        self.logger = logger
+
+    def predict(self, vw_event: Event) -> Any:
+        text_parser = vw.TextFormatParser(self.workspace)
+        return self.workspace.predict_one(
+            parse_lines(text_parser,self.text_embedder.to_vw_format(vw_event))
+        )
+
+    def learn(self,vw_event: Event):
+        vw_ex = self.text_embedder.to_vw_format(vw_event)
+
+        text_parser = vw.TextFormatParser(self.workspace)
+        multi_ex = parse_lines(text_parser, vw_ex)
+        self.workspace.learn_one(multi_ex)
+
+    def log(self, vw_event: Event):
+        vw_ex = self.text_embedder.to_vw_format(vw_event)
+        self.logger.log(vw_ex)
+
+
 class Embedder(ABC):
     @abstractmethod
-    def to_vw_format(self, **kwargs) -> str:
+    def to_vw_format(self, vw_event: Event) -> str:
         pass
 
 
@@ -92,9 +139,7 @@ class ResponseValidator(ABC):
     """Abstract method to grade the chosen action or the response of the llm"""
 
     @abstractmethod
-    def grade_response(
-        self, inputs: Dict[str, Any], llm_response: str, **kwargs
-    ) -> float:
+    def grade_response(self, inputs: Dict[str, Any], llm_response: str) -> float:
         pass
 
 
@@ -107,7 +152,7 @@ class RLChain(Chain):
         large_action_spaces (bool, optional): If set to True and vw_cmd has not been specified in the constructor, it will enable large action spaces
         vw_cmd (List[str], optional): Advanced users can set the VW command line to whatever they want, as long as it is compatible with the Type that is specified (Type Enum)
         model_save_dir (str, optional): The directory to save the VW model to. Defaults to the current directory.
-        response_validator (ResponseValidator, optional): If set, the chain will check the response using the provided response_validator and the VW model will be updated with the result. Defaults to None.
+        response_validator (ResponseValidator): If set, the chain will check the response using the provided response_validator and the VW model will be updated with the result. Defaults to None.
 
     Notes:
         The class creates a VW model instance using the provided arguments. Before the chain object is destroyed the save_progress() function can be called. If it is called, the learned VW model is saved to a file in the current directory named `model-<checkpoint>.vw`. Checkpoints start at 1 and increment monotonically.
@@ -118,21 +163,28 @@ class RLChain(Chain):
     workspace: Optional[vw.Workspace] = None
     next_checkpoint: int = 1
     model_save_dir: str = "./"
-    response_validator: Optional[ResponseValidator] = None
     vw_logger: VwLogger = None
 
     output_key: str = "result"  #: :meta private:
     prompt: PromptTemplate
+    response_validator: Union[ResponseValidator, None]
+    policy: Optional[Policy]
+    text_embedder: Embedder
 
     def __init__(
         self,
         model_loading=True,
         vw_cmd=[],
+        policy=VwPolicy,
         vw_logs: Optional[Union[str, os.PathLike]] = None,
         *args,
         **kwargs,
     ):
         super().__init__(*args, **kwargs)
+        if self.response_validator is None:
+            logger.warning(
+                "No response validator provided. This is not recommended for RLChains."
+            )
         self.vw_logger = VwLogger(vw_logs)
         next_checkpoint = 1
         serialized_workspace = None
@@ -168,6 +220,12 @@ class RLChain(Chain):
         else:
             self.workspace = vw.Workspace(vw_cmd)
 
+        self.policy = policy(
+            workspace=self.workspace,
+            text_embedder=self.text_embedder,
+            logger=self.vw_logger,
+        )
+
     class Config:
         """Configuration for this pydantic object."""
 
@@ -189,6 +247,16 @@ class RLChain(Chain):
         """
         return [self.output_key]
 
+    @abstractmethod
+    def call_after_llm(self, llm_response: str, event: Event, response_quality: Optional[float],):
+        pass
+
+    @abstractmethod
+    def call_before_llm(
+        self, inputs: Dict[str, Any], run_manager: CallbackManagerForChainRun
+    ) -> Tuple[Dict[str, Any], Any]:
+        pass
+
     def _call(
         self,
         inputs: Dict[str, Any],
@@ -196,7 +264,9 @@ class RLChain(Chain):
     ) -> Dict[str, str]:
         _run_manager = run_manager or CallbackManagerForChainRun.get_noop_manager()
 
-        t = self.llm_chain.run(**inputs, callbacks=_run_manager.get_child())
+        next_chain_inputs, event = self.call_before_llm(inputs=inputs, run_manager=_run_manager)
+
+        t = self.llm_chain.run(**next_chain_inputs, callbacks=_run_manager.get_child())
         _run_manager.on_text(t, color="green", verbose=self.verbose)
         t = t.strip()
 
@@ -206,7 +276,28 @@ class RLChain(Chain):
         output = t
         _run_manager.on_text("\nAnswer: ", verbose=self.verbose)
         _run_manager.on_text(output, color="yellow", verbose=self.verbose)
-        return {self.output_key: output}
+
+        self.call_after_llm_before_scoring(llm_response=output, event=event)
+
+        response_quality = None
+        try:
+            if self.response_validator:
+                response_quality = self.response_validator.grade_response(
+                    inputs=inputs, llm_response=output
+                )
+        except Exception as e:
+            logger.info(
+                f"The LLM was not able to rank and the chain was not able to adjust to this response, error: {e}"
+            )
+
+        self.call_after_scoring_before_learning(llm_response=output, response_quality=response_quality, event=event)
+
+        return {
+            self.output_key: {
+                "response": output,
+                "response_result": event,
+            }
+        }
 
     def save_progress(self) -> None:
         """
@@ -231,12 +322,6 @@ class RLChain(Chain):
     @property
     def _chain_type(self) -> str:
         return "llm_personalizer_chain"
-
-    def _learn(self, vw_ex):
-        self.vw_logger.log(vw_ex)
-        text_parser = vw.TextFormatParser(self.workspace)
-        multi_ex = parse_lines(text_parser, vw_ex)
-        self.workspace.learn_one(multi_ex)
 
 
 def is_stringtype_instance(item: Any) -> bool:

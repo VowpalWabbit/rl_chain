@@ -1,3 +1,5 @@
+from __future__ import annotations
+
 from . import rl_chain_base as base
 from langchain.prompts import (
     ChatPromptTemplate,
@@ -23,17 +25,17 @@ from langchain.chains.llm import LLMChain
 from sentence_transformers import SentenceTransformer
 
 
-class Label:
+class SlatesLabel(base.Label):
     chosen: List[int]
     p: List[float]
-    r: Optional[float]
+    cost: Optional[float]
 
     def __init__(
-        self, vwpred: List[List[Tuple[int, float]]], r: Optional[float] = None
+        self, vwpred: List[List[Tuple[int, float]]], cost: Optional[float] = None
     ):
         self.chosen = [p[0][0] for p in vwpred]
         self.p = [p[0][1] for p in vwpred]
-        self.r = r
+        self.cost = cost
 
     def get_actions_and_probs(self):
         return zip(self.chosen, self.p)
@@ -71,20 +73,14 @@ class SlatesTextEmbedder(base.Embedder):
 
         return action_features
 
-    def to_vw_format(
-        self,
-        inputs: Dict[str, Any],
-        actions: Dict[str, Any],
-        context: Optional[Dict[str, Any]] = None,
-        slates_label: Optional[Label] = None,
-    ) -> str:
-        action_features = self.to_action_features(actions)
+    def to_vw_format(self, vw_event: SlatesPersonalizerChain.Event) -> str:
+        action_features = self.to_action_features(vw_event.actions)
 
-        cost = -1.0 * slates_label.r if slates_label else ""
+        cost = vw_event.label.cost if vw_event.label else ""
         context_str = f"slates shared {cost} "
 
-        if context:
-            embedded_context = base.embed(context, self.model)
+        if vw_event.context:
+            embedded_context = base.embed(vw_event.context, self.model)
             for context_item in embedded_context:
                 for ns, ctx in context_item.items():
                     context_str += (
@@ -101,70 +97,47 @@ class SlatesTextEmbedder(base.Embedder):
             ]
         )
         ps = (
-            [f"{a}:{p}" for a, p in slates_label.get_actions_and_probs()]
-            if slates_label
+            [f"{a}:{p}" for a, p in vw_event.label.get_actions_and_probs()]
+            if vw_event.label
             else [""] * len(action_features)
         )
         slots = [f"slates slot {p} |" for p in ps]
         return "\n".join(list(chain.from_iterable([[context_str], actions, slots])))
 
 
-class Policy(ABC):
-    @abstractmethod
-    def predict(
-        self, inputs: Dict[str, Any], actions: Dict[str, Any], context: Dict[str, Any]
-    ) -> Label:
-        ...
-
-
-class VwPolicy(Policy):
-    def __init__(
-        self, workspace: vw.Workspace, text_embedder: SlatesTextEmbedder, *_, **__
-    ):
-        self.workspace = workspace
+class RandomPolicy(base.Policy):
+    def __init__(self, text_embedder: base.Embedder, *_, **__):
         self.text_embedder = text_embedder
 
     def predict(
         self, inputs: Dict[str, Any], actions: Dict[str, Any], context: Dict[str, Any]
-    ) -> Label:
-        text_parser = vw.TextFormatParser(self.workspace)
-        return Label(
-            self.workspace.predict_one(
-                base.parse_lines(
-                    text_parser,
-                    self.text_embedder.to_vw_format(
-                        inputs=inputs, actions=actions, context=context
-                    ),
-                )
-            )
-        )
+    ) -> Any:
+        return [
+            [(random.randint(0, len(slot) - 1), 1.0 / len(slot))]
+            for slot in self.text_embedder.to_action_features(actions)
+        ]
+
+    def learn(self, event: SlatesPersonalizerChain.Event) -> Any:
+        pass
+
+    def log(self, event: SlatesPersonalizerChain.Event) -> Any:
+        pass
 
 
-class RandomPolicy(Policy):
-    def __init__(self, text_embedder: SlatesTextEmbedder, *_, **__):
+class FirstChoicePolicy(base.Policy):
+    def __init__(self, text_embedder: base.Embedder, *_, **__):
         self.text_embedder = text_embedder
 
     def predict(
         self, inputs: Dict[str, Any], actions: Dict[str, Any], context: Dict[str, Any]
-    ) -> Label:
-        return Label(
-            [
-                [(random.randint(0, len(slot) - 1), 1.0 / len(slot))]
-                for slot in self.text_embedder.to_action_features(actions)
-            ]
-        )
+    ) -> Any:
+        return [[(0, 1)] for slot in self.text_embedder.to_action_features(actions)]
 
+    def learn(self, event: SlatesPersonalizerChain.Event) -> Any:
+        pass
 
-class FirstChoicePolicy(Policy):
-    def __init__(self, text_embedder: SlatesTextEmbedder, *_, **__):
-        self.text_embedder = text_embedder
-
-    def predict(
-        self, inputs: Dict[str, Any], actions: Dict[str, Any], context: Dict[str, Any]
-    ) -> Label:
-        return Label(
-            [[(0, 1)] for slot in self.text_embedder.to_action_features(actions)]
-        )
+    def log(self, event: SlatesPersonalizerChain.Event) -> Any:
+        pass
 
 
 class LLMResponseValidatorForSlates(base.ResponseValidator):
@@ -194,10 +167,7 @@ class LLMResponseValidatorForSlates(base.ResponseValidator):
 
         self.llm_chain = LLMChain(llm=llm, prompt=self.prompt)
 
-    def grade_response(
-        self, inputs: Dict[str, Any], llm_response: str, **kwargs
-    ) -> float:
-
+    def grade_response(self, inputs: Dict[str, Any], llm_response: str) -> float:
         vars = {k: v for k, v in inputs.items() if k in self.prompt.input_variables}
         if "llm_response" in self.prompt.input_variables:
             vars["llm_response"] = llm_response
@@ -213,11 +183,22 @@ class LLMResponseValidatorForSlates(base.ResponseValidator):
 
 
 class SlatesPersonalizerChain(base.RLChain):
-    text_embedder: Optional[SlatesTextEmbedder] = None
-    policy: Optional[Policy] = None
+    class Event(base.Event):
+        def __init__(
+            self,
+            inputs: Dict[str, Any],
+            actions: Dict[str, Any],
+            context: Dict[str, Any],
+            label: Optional[SlatesLabel] = None,
+        ):
+            self.inputs = inputs
+            self.actions = actions
+            self.context = context
+            self.label = label
+
     _reward: List[float] = PrivateAttr(default=[])
 
-    def __init__(self, policy=VwPolicy, *args, **kwargs):
+    def __init__(self, text_embedder: Optional[base.Embedder] = None, *args, **kwargs):
         vw_cmd = kwargs.get("vw_cmd", [])
         if not vw_cmd:
             vw_cmd = [
@@ -233,18 +214,12 @@ class SlatesPersonalizerChain(base.RLChain):
 
         kwargs["vw_cmd"] = vw_cmd
 
-        super().__init__(*args, **kwargs)
-        self.text_embedder = (
-            SlatesTextEmbedder() if self.text_embedder is None else self.text_embedder
-        )
-        self.policy = policy(workspace=self.workspace, text_embedder=self.text_embedder)
+        if text_embedder is None:
+            text_embedder = SlatesTextEmbedder()
 
-    def _call(
-        self,
-        inputs: Dict[str, Any],
-        run_manager: Optional[CallbackManagerForChainRun] = None,
-    ) -> Dict[str, str]:
+        super().__init__(text_embedder=text_embedder, *args, **kwargs)
 
+    def _get_context_and_actions(self, inputs: Dict[str, Any]):
         named_actions = {
             k: inputs[k].value
             for k in inputs.keys()
@@ -264,45 +239,41 @@ class SlatesPersonalizerChain(base.RLChain):
             if isinstance(inputs[k], base._BasedOn)
         }
 
-        label = self.policy.predict(
-            inputs=inputs, context=context, actions=named_actions
+        return context, named_actions
+
+    def call_before_llm(
+        self, inputs: Dict[str, Any], run_manager: CallbackManagerForChainRun
+    ) -> Tuple[Dict[str, Any], Event]:
+        context, named_actions = self._get_context_and_actions(inputs)
+        event = SlatesPersonalizerChain.Event(
+            inputs=inputs, actions=named_actions, context=context
         )
+        label = SlatesLabel(self.policy.predict(event))
+        event.label = label
 
         preds = {}
         for i, (j, a) in enumerate(zip(label.chosen, named_actions.values())):
             preds[list(named_actions.keys())[i]] = str(a[j])
 
-        inputs.update(preds)
+        next_chain_inputs = inputs.copy()
+        next_chain_inputs.update(preds)
 
-        # need to clean up the BasedOn inputs in case they need to be used in the prompt
-        for k in inputs.keys():
-            if isinstance(inputs[k], base._BasedOn):
-                inputs[k] = inputs[k].value
+        return next_chain_inputs, event
 
-        llm_resp = super()._call(run_manager=run_manager, inputs=inputs)
+    def call_after_llm(
+        self, llm_response: str, event: Event, response_quality: Optional[float]
+    ):
+        event.label.cost = -1.0 * response_quality if response_quality else None
+        self._reward.append(response_quality)
+        self.policy.learn(event)
+        self.policy.log(event)
 
-        if self.response_validator:
-            try:
-                label.r = self.response_validator.grade_response(
-                    inputs=preds, llm_response=llm_resp[self.output_key]
-                )
-                self._reward.append(label.r)
-
-                vw_ex = self.text_embedder.to_vw_format(
-                    inputs=inputs,
-                    actions=named_actions,
-                    context=context,
-                    slates_label=label,
-                )
-                self._learn(vw_ex)
-
-            except Exception as e:
-                print(f"this is the error: {e}")
-                base.logger.info(
-                    "The LLM was not able to rank and the chain was not able to adjust to this response"
-                )
-
-        return llm_resp
+    def _call(
+        self,
+        inputs: Dict[str, Any],
+        run_manager: Optional[CallbackManagerForChainRun] = None,
+    ) -> Dict[str, str]:
+        return super()._call(run_manager=run_manager, inputs=inputs)
 
     @property
     def reward(self):
