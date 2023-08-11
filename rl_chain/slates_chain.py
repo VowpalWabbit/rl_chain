@@ -238,32 +238,46 @@ class SlatesPersonalizerChain(base.RLChain):
 
         return context, named_actions
 
-    def call_before_llm(
-        self, inputs: Dict[str, Any], run_manager: CallbackManagerForChainRun
-    ) -> Tuple[Dict[str, Any], Event]:
+    def call_before_predict(
+        self, inputs: Dict[str, Any]
+    ) -> SlatesPersonalizerChain.Event:
         context, named_actions = self._get_context_and_actions(inputs)
         event = SlatesPersonalizerChain.Event(
             inputs=inputs, actions=named_actions, context=context
         )
-        label = SlatesLabel(self.policy.predict(event))
+        return event
+
+    def call_after_predict_before_llm(
+        self,
+        inputs: Dict[str, Any],
+        event: SlatesPersonalizerChain.Event,
+        vwpreds: List[List[Tuple[int, float]]],
+    ) -> Tuple[Dict[str, Any], SlatesPersonalizerChain.Event]:
+        label = SlatesLabel(vwpred=vwpreds)
         event.label = label
 
         preds = {}
-        for i, (j, a) in enumerate(zip(label.chosen, named_actions.values())):
-            preds[list(named_actions.keys())[i]] = str(a[j])
+        for i, (j, a) in enumerate(zip(label.chosen, event.actions.values())):
+            preds[list(event.actions.keys())[i]] = str(a[j])
 
         next_chain_inputs = inputs.copy()
         next_chain_inputs.update(preds)
 
         return next_chain_inputs, event
 
-    def call_after_llm(
+    def call_after_llm_before_scoring(
+        self, llm_response: str, event: SlatesPersonalizerChain.Event
+    ) -> Tuple[Dict[str, Any], SlatesPersonalizerChain.Event]:
+        return event.inputs, event
+
+    def call_after_scoring_before_learning(
         self, llm_response: str, event: Event, response_quality: Optional[float]
-    ):
-        event.label.cost = -1.0 * response_quality if response_quality else None
+    ) -> SlatesPersonalizerChain.Event:
+        event.label.cost = (
+            -1.0 * response_quality if response_quality is not None else None
+        )
         self._reward.append(response_quality)
-        self.policy.learn(event)
-        self.policy.log(event)
+        return event
 
     def _call(
         self,

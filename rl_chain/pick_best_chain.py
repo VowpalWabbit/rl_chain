@@ -198,13 +198,15 @@ class PickBest(base.RLChain):
             self.actions = actions
             self.context = context
 
-    text_embedder: ContextualBanditTextEmbedder = ContextualBanditTextEmbedder(
-        "bert-base-nli-mean-tokens"
-    )
     best_pick_input_key = "best_pick"
     best_pick_context_input_key = "best_pick_context"
 
-    def __init__(self, *args, **kwargs):
+    def __init__(
+        self,
+        text_embedder: Optional[ContextualBanditTextEmbedder] = None,
+        *args,
+        **kwargs,
+    ):
         vw_cmd = kwargs.get("vw_cmd", [])
         if not vw_cmd:
             vw_cmd = [
@@ -221,8 +223,10 @@ class PickBest(base.RLChain):
                 )
 
         kwargs["vw_cmd"] = vw_cmd
+        if not text_embedder:
+            text_embedder = ContextualBanditTextEmbedder("bert-base-nli-mean-tokens")
 
-        super().__init__(*args, **kwargs)
+        super().__init__(text_embedder=text_embedder, *args, **kwargs)
 
     def _get_action_variable_name(self, inputs: Dict[str, Any]) -> str:
         for avr in inputs.keys():
@@ -277,49 +281,46 @@ class PickBest(base.RLChain):
                 f"The PickBest chain does not accept '{self.best_pick_input_key}' or '{self.best_pick_context_input_key}' as input keys, they are reserved for internal use during auto reward."
             )
 
-    def call_before_llm(
-        self, inputs: Dict[str, Any], run_manager: CallbackManagerForChainRun
-    ) -> Tuple[Dict[str, Any], PickBest.Event]:
-
+    def call_before_predict(self, inputs: Dict[str, Any]) -> PickBest.Event:
         context, actions = self._get_context_and_actions(inputs=inputs)
-        action_variable_name = self._get_action_variable_name(inputs=inputs)
-
         event = PickBest.Event(inputs=inputs, actions=actions, context=context)
-        preds: List[Tuple[int, float]] = self.policy.predict(event=event)
-        label = PickBestLabel(vwpred=preds)
-        pred_action = actions[label.chosen_action]
+        return event
+
+    def call_after_predict_before_llm(
+        self, inputs: Dict[str, Any], event: Event, vwpreds: List[Tuple[int, float]]
+    ) -> Tuple[Dict[str, Any], PickBest.Event]:
+        label = PickBestLabel(vwpred=vwpreds)
+        pred_action = event.actions[label.chosen_action]
         event.label = label
 
+        action_variable_name = self._get_action_variable_name(inputs=inputs)
         next_chain_inputs = inputs.copy()
         next_chain_inputs.update({action_variable_name: pred_action})
 
         return next_chain_inputs, event
 
-    def call_after_llm(
-        self, llm_response: str, event: Event, response_quality: Optional[float]
-    ):
-        if self.response_validator:
-            try:
-                event.inputs.update(
-                    {
-                        self.best_pick_context_input_key: str(event.context),
-                        self.best_pick_input_key: event.actions[
-                            event.label.chosen_action
-                        ],
-                    }
-                )
-                cost = -1.0 * self.response_validator.grade_response(
-                    inputs=event.inputs, llm_response=llm_response
-                )
-                event.label.cost = cost
+    def call_after_llm_before_scoring(
+        self, llm_response: str, event: PickBest.Event
+    ) -> Tuple[Dict[str, Any], PickBest.Event]:
+        next_chain_inputs = event.inputs.copy()
+        next_chain_inputs.update(
+            {
+                self.best_pick_context_input_key: str(event.context),
+                self.best_pick_input_key: event.actions[event.label.chosen_action],
+            }
+        )
+        return next_chain_inputs, event
 
-                self.policy.learn(event=event)
-                self.policy.log(event=event)
-
-            except Exception as e:
-                base.logger.info(
-                    f"The LLM was not able to rank and the chain was not able to adjust to this response. Error: {e}"
-                )
+    def call_after_scoring_before_learning(
+        self,
+        llm_response: str,
+        event: PickBest.Event,
+        response_quality: Optional[float],
+    ) -> Event:
+        event.label.cost = (
+            -1.0 * response_quality if response_quality is not None else None
+        )
+        return event
 
     def _call(
         self,

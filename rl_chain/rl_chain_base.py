@@ -171,19 +171,17 @@ class RLChain(Chain):
     """
 
     llm_chain: Chain
-    workspace: Optional[vw.Workspace] = None
     next_checkpoint: int = 1
     model_save_dir: str = "./"
-    vw_logger: VwLogger = None
 
     output_key: str = "result"  #: :meta private:
     prompt: PromptTemplate
     response_validator: Union[ResponseValidator, None]
     policy: Optional[Policy]
-    text_embedder: Embedder
 
     def __init__(
         self,
+        text_embedder: Embedder,
         model_loading=True,
         vw_cmd=[],
         policy=VwPolicy,
@@ -196,7 +194,6 @@ class RLChain(Chain):
             logger.warning(
                 "No response validator provided. This is not recommended for RLChains."
             )
-        self.vw_logger = VwLogger(vw_logs)
         next_checkpoint = 1
         serialized_workspace = None
 
@@ -226,15 +223,14 @@ class RLChain(Chain):
 
         logger.info(f"vw command: {vw_cmd}")
         # initialize things
+        workspace = None
         if serialized_workspace:
-            self.workspace = vw.Workspace(vw_cmd, model_data=serialized_workspace)
+            workspace = vw.Workspace(vw_cmd, model_data=serialized_workspace)
         else:
-            self.workspace = vw.Workspace(vw_cmd)
+            workspace = vw.Workspace(vw_cmd)
 
         self.policy = policy(
-            workspace=self.workspace,
-            text_embedder=self.text_embedder,
-            logger=self.vw_logger,
+            workspace=workspace, text_embedder=text_embedder, logger=VwLogger(vw_logs)
         )
 
     class Config:
@@ -259,15 +255,25 @@ class RLChain(Chain):
         return [self.output_key]
 
     @abstractmethod
-    def call_before_llm(
-        self, inputs: Dict[str, Any], run_manager: CallbackManagerForChainRun
+    def call_before_predict(self, inputs: Dict[str, Any]) -> Event:
+        pass
+
+    @abstractmethod
+    def call_after_predict_before_llm(
+        self, inputs: Dict[str, Any], event: Event, vwpreds: Any
     ) -> Tuple[Dict[str, Any], Event]:
         pass
 
     @abstractmethod
-    def call_after_llm(
+    def call_after_llm_before_scoring(
+        self, llm_response: str, event: Event
+    ) -> Tuple[Dict[str, Any], Event]:
+        pass
+
+    @abstractmethod
+    def call_after_scoring_before_learning(
         self, llm_response: str, event: Event, response_quality: Optional[float]
-    ):
+    ) -> Event:
         pass
 
     def _call(
@@ -277,8 +283,11 @@ class RLChain(Chain):
     ) -> Dict[str, str]:
         _run_manager = run_manager or CallbackManagerForChainRun.get_noop_manager()
 
-        next_chain_inputs, event = self.call_before_llm(
-            inputs=inputs, run_manager=_run_manager
+        event = self.call_before_predict(inputs=inputs)
+        vw_pred = self.policy.predict(event=event)
+
+        next_chain_inputs, event = self.call_after_predict_before_llm(
+            inputs=inputs, event=event, vwpreds=vw_pred
         )
 
         t = self.llm_chain.run(**next_chain_inputs, callbacks=_run_manager.get_child())
@@ -292,23 +301,27 @@ class RLChain(Chain):
         _run_manager.on_text("\nAnswer: ", verbose=self.verbose)
         _run_manager.on_text(output, color="yellow", verbose=self.verbose)
 
-        # self.call_after_llm_before_scoring(llm_response=output, event=event)
+        next_chain_inputs, event = self.call_after_llm_before_scoring(
+            llm_response=output, event=event
+        )
 
         response_quality = None
         try:
             if self.response_validator:
                 response_quality = self.response_validator.grade_response(
-                    inputs=inputs, llm_response=output
+                    inputs=next_chain_inputs, llm_response=output
                 )
         except Exception as e:
             logger.info(
                 f"The LLM was not able to rank and the chain was not able to adjust to this response, error: {e}"
             )
 
-        # self.call_after_scoring_before_learning(llm_response=output, response_quality=response_quality, event=event)
-        self.call_after_llm(
+        event = self.call_after_scoring_before_learning(
             llm_response=output, response_quality=response_quality, event=event
         )
+
+        self.policy.learn(event=event)
+        self.policy.log(event=event)
 
         return {self.output_key: {"response": output, "response_result": event}}
 
