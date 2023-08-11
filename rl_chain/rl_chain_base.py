@@ -90,11 +90,21 @@ class Event(ABC):
     inputs: Dict[str, Any]
     label: Optional[Label]
 
+    def __init__(self, inputs: Dict[str, Any], label: Optional[Label] = None):
+        self.inputs = inputs
+        self.label = label
+
 class Policy(ABC):
     @abstractmethod
-    def predict(
-        self, inputs: Dict[str, Any], actions: Dict[str, Any], context: Dict[str, Any]
-    ) -> Any:
+    def predict(self, event: Event) -> Any:
+        pass
+
+    @abstractmethod
+    def learn(self, event: Event):
+        pass
+
+    @abstractmethod
+    def log(self, event: Event):
         pass
 
 
@@ -111,21 +121,21 @@ class VwPolicy(Policy):
         self.text_embedder = text_embedder
         self.logger = logger
 
-    def predict(self, vw_event: Event) -> Any:
+    def predict(self, event: Event) -> Any:
         text_parser = vw.TextFormatParser(self.workspace)
         return self.workspace.predict_one(
-            parse_lines(text_parser,self.text_embedder.to_vw_format(vw_event))
+            parse_lines(text_parser,self.text_embedder.to_vw_format(event))
         )
 
-    def learn(self,vw_event: Event):
-        vw_ex = self.text_embedder.to_vw_format(vw_event)
+    def learn(self, event: Event):
+        vw_ex = self.text_embedder.to_vw_format(event)
 
         text_parser = vw.TextFormatParser(self.workspace)
         multi_ex = parse_lines(text_parser, vw_ex)
         self.workspace.learn_one(multi_ex)
 
-    def log(self, vw_event: Event):
-        vw_ex = self.text_embedder.to_vw_format(vw_event)
+    def log(self, event: Event):
+        vw_ex = self.text_embedder.to_vw_format(event)
         self.logger.log(vw_ex)
 
 
@@ -248,13 +258,13 @@ class RLChain(Chain):
         return [self.output_key]
 
     @abstractmethod
-    def call_after_llm(self, llm_response: str, event: Event, response_quality: Optional[float],):
+    def call_before_llm(
+        self, inputs: Dict[str, Any], run_manager: CallbackManagerForChainRun
+    ) -> Tuple[Dict[str, Any], Event]:
         pass
 
     @abstractmethod
-    def call_before_llm(
-        self, inputs: Dict[str, Any], run_manager: CallbackManagerForChainRun
-    ) -> Tuple[Dict[str, Any], Any]:
+    def call_after_llm(self, llm_response: str, event: Event, response_quality: Optional[float],):
         pass
 
     def _call(
@@ -277,7 +287,7 @@ class RLChain(Chain):
         _run_manager.on_text("\nAnswer: ", verbose=self.verbose)
         _run_manager.on_text(output, color="yellow", verbose=self.verbose)
 
-        self.call_after_llm_before_scoring(llm_response=output, event=event)
+        # self.call_after_llm_before_scoring(llm_response=output, event=event)
 
         response_quality = None
         try:
@@ -290,7 +300,8 @@ class RLChain(Chain):
                 f"The LLM was not able to rank and the chain was not able to adjust to this response, error: {e}"
             )
 
-        self.call_after_scoring_before_learning(llm_response=output, response_quality=response_quality, event=event)
+        # self.call_after_scoring_before_learning(llm_response=output, response_quality=response_quality, event=event)
+        self.call_after_llm(llm_response=output, response_quality=response_quality, event=event)
 
         return {
             self.output_key: {

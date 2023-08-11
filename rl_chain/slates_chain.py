@@ -109,12 +109,10 @@ class RandomPolicy(base.Policy):
     def __init__(self, text_embedder: base.Embedder, *_, **__):
         self.text_embedder = text_embedder
 
-    def predict(
-        self, inputs: Dict[str, Any], actions: Dict[str, Any], context: Dict[str, Any]
-    ) -> Any:
+    def predict(self, event: SlatesPersonalizerChain.Event) -> Any:
         return [
             [(random.randint(0, len(slot) - 1), 1.0 / len(slot))]
-            for slot in self.text_embedder.to_action_features(actions)
+            for slot in self.text_embedder.to_action_features(event.actions)
         ]
 
     def learn(self, event: SlatesPersonalizerChain.Event) -> Any:
@@ -128,10 +126,8 @@ class FirstChoicePolicy(base.Policy):
     def __init__(self, text_embedder: base.Embedder, *_, **__):
         self.text_embedder = text_embedder
 
-    def predict(
-        self, inputs: Dict[str, Any], actions: Dict[str, Any], context: Dict[str, Any]
-    ) -> Any:
-        return [[(0, 1)] for slot in self.text_embedder.to_action_features(actions)]
+    def predict(self, event: SlatesPersonalizerChain.Event) -> Any:
+        return [[(0, 1)] for slot in self.text_embedder.to_action_features(event.actions)]
 
     def learn(self, event: SlatesPersonalizerChain.Event) -> Any:
         pass
@@ -191,10 +187,9 @@ class SlatesPersonalizerChain(base.RLChain):
             context: Dict[str, Any],
             label: Optional[SlatesLabel] = None,
         ):
-            self.inputs = inputs
+            super().__init__(inputs=inputs, label=label)
             self.actions = actions
             self.context = context
-            self.label = label
 
     _reward: List[float] = PrivateAttr(default=[])
 
