@@ -94,6 +94,7 @@ class Event(ABC):
         self.inputs = inputs
         self.label = label
 
+
 class Policy(ABC):
     @abstractmethod
     def predict(self, event: Event) -> Any:
@@ -124,7 +125,7 @@ class VwPolicy(Policy):
     def predict(self, event: Event) -> Any:
         text_parser = vw.TextFormatParser(self.workspace)
         return self.workspace.predict_one(
-            parse_lines(text_parser,self.text_embedder.to_vw_format(event))
+            parse_lines(text_parser, self.text_embedder.to_vw_format(event))
         )
 
     def learn(self, event: Event):
@@ -264,7 +265,9 @@ class RLChain(Chain):
         pass
 
     @abstractmethod
-    def call_after_llm(self, llm_response: str, event: Event, response_quality: Optional[float],):
+    def call_after_llm(
+        self, llm_response: str, event: Event, response_quality: Optional[float]
+    ):
         pass
 
     def _call(
@@ -274,7 +277,9 @@ class RLChain(Chain):
     ) -> Dict[str, str]:
         _run_manager = run_manager or CallbackManagerForChainRun.get_noop_manager()
 
-        next_chain_inputs, event = self.call_before_llm(inputs=inputs, run_manager=_run_manager)
+        next_chain_inputs, event = self.call_before_llm(
+            inputs=inputs, run_manager=_run_manager
+        )
 
         t = self.llm_chain.run(**next_chain_inputs, callbacks=_run_manager.get_child())
         _run_manager.on_text(t, color="green", verbose=self.verbose)
@@ -301,14 +306,11 @@ class RLChain(Chain):
             )
 
         # self.call_after_scoring_before_learning(llm_response=output, response_quality=response_quality, event=event)
-        self.call_after_llm(llm_response=output, response_quality=response_quality, event=event)
+        self.call_after_llm(
+            llm_response=output, response_quality=response_quality, event=event
+        )
 
-        return {
-            self.output_key: {
-                "response": output,
-                "response_result": event,
-            }
-        }
+        return {self.output_key: {"response": output, "response_result": event}}
 
     def save_progress(self) -> None:
         """

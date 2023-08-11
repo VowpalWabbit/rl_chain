@@ -127,7 +127,9 @@ class FirstChoicePolicy(base.Policy):
         self.text_embedder = text_embedder
 
     def predict(self, event: SlatesPersonalizerChain.Event) -> Any:
-        return [[(0, 1)] for slot in self.text_embedder.to_action_features(event.actions)]
+        return [
+            [(0, 1)] for slot in self.text_embedder.to_action_features(event.actions)
+        ]
 
     def learn(self, event: SlatesPersonalizerChain.Event) -> Any:
         pass

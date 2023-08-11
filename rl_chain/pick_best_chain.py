@@ -20,14 +20,13 @@ from langchain.base_language import BaseLanguageModel
 from langchain.chains.llm import LLMChain
 from sentence_transformers import SentenceTransformer
 
+
 class PickBestLabel(base.Label):
     chosen_action: int
     chosen_action_probability: float
     cost: Optional[float]
 
-    def __init__(
-        self, vwpred: List[Tuple[int, float]], cost: Optional[float] = None
-    ):
+    def __init__(self, vwpred: List[Tuple[int, float]], cost: Optional[float] = None):
         prob_sum = sum(prob for _, prob in vwpred)
         probabilities = [prob / prob_sum for _, prob in vwpred]
 
@@ -36,10 +35,11 @@ class PickBestLabel(base.Label):
         sampled_ap = vwpred[sampled_index]
         sampled_action = sampled_ap[0]
         sampled_prob = sampled_ap[1]
-    
+
         self.chosen_action = sampled_action
         self.chosen_action_probability = sampled_prob
         self.cost = cost
+
 
 class ContextualBanditTextEmbedder(base.Embedder):
     """
@@ -295,7 +295,9 @@ class PickBest(base.RLChain):
 
         return next_chain_inputs, event
 
-    def call_after_llm(self, llm_response: str, event: Event, response_quality: Optional[float],):
+    def call_after_llm(
+        self, llm_response: str, event: Event, response_quality: Optional[float]
+    ):
         if self.response_validator:
             try:
                 event.inputs.update(
@@ -306,7 +308,9 @@ class PickBest(base.RLChain):
                         ],
                     }
                 )
-                cost = -1.0 * self.response_validator.grade_response(inputs=event.inputs, llm_response=llm_response)
+                cost = -1.0 * self.response_validator.grade_response(
+                    inputs=event.inputs, llm_response=llm_response
+                )
                 event.label.cost = cost
 
                 self.policy.learn(event=event)
@@ -350,7 +354,7 @@ class PickBest(base.RLChain):
         llm_chain = LLMChain(llm=llm, prompt=prompt)
         return PickBest.from_chain(llm_chain=llm_chain, prompt=prompt, **kwargs)
 
-   #TODO needs some moving to base
+    # TODO needs some moving to base
     def learn_delayed_reward(
         self, reward: float, response_result: Event, force_reward=False
     ) -> None:
