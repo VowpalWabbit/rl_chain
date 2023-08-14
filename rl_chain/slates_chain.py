@@ -25,22 +25,6 @@ from langchain.chains.llm import LLMChain
 from sentence_transformers import SentenceTransformer
 
 
-class SlatesLabel(base.Label):
-    chosen: List[int]
-    p: List[float]
-    cost: Optional[float]
-
-    def __init__(
-        self, vwpred: List[List[Tuple[int, float]]], cost: Optional[float] = None
-    ):
-        self.chosen = [p[0][0] for p in vwpred]
-        self.p = [p[0][1] for p in vwpred]
-        self.cost = cost
-
-    def get_actions_and_probs(self):
-        return zip(self.chosen, self.p)
-
-
 class SlatesTextEmbedder(base.Embedder):
     """
     Slates Text Embedder class that embeds the context and actions and slates into a format that can be used by VW
@@ -181,13 +165,28 @@ class LLMResponseValidatorForSlates(base.ResponseValidator):
 
 
 class SlatesPersonalizerChain(base.RLChain):
+    class Label(base.Label):
+        chosen: List[int]
+        p: List[float]
+        cost: Optional[float]
+
+        def __init__(
+            self, vwpred: List[List[Tuple[int, float]]], cost: Optional[float] = None
+        ):
+            self.chosen = [p[0][0] for p in vwpred]
+            self.p = [p[0][1] for p in vwpred]
+            self.cost = cost
+
+        def get_actions_and_probs(self):
+            return zip(self.chosen, self.p)
+
     class Event(base.Event):
         def __init__(
             self,
             inputs: Dict[str, Any],
             actions: Dict[str, Any],
             context: Dict[str, Any],
-            label: Optional[SlatesLabel] = None,
+            label: Optional[SlatesPersonalizerChain.Label] = None,
         ):
             super().__init__(inputs=inputs, label=label)
             self.actions = actions
@@ -216,32 +215,11 @@ class SlatesPersonalizerChain(base.RLChain):
 
         super().__init__(text_embedder=text_embedder, *args, **kwargs)
 
-    def _get_context_and_actions(self, inputs: Dict[str, Any]):
-        named_actions = {
-            k: inputs[k].value
-            for k in inputs.keys()
-            if isinstance(inputs[k], base._ToSelectFrom)
-        }
-
-        if not named_actions:
-            raise ValueError(
-                "No variables using 'ToSelectFrom' found in the inputs. Please include at least one variable containing a list to select from."
-            )
-
-        context = {
-            k: inputs[k].value
-            if isinstance(inputs[k].value, list)
-            else [inputs[k].value]
-            for k in inputs.keys()
-            if isinstance(inputs[k], base._BasedOn)
-        }
-
-        return context, named_actions
 
     def call_before_predict(
         self, inputs: Dict[str, Any]
     ) -> SlatesPersonalizerChain.Event:
-        context, named_actions = self._get_context_and_actions(inputs)
+        context, named_actions = self.get_context_and_actions(inputs)
         event = SlatesPersonalizerChain.Event(
             inputs=inputs, actions=named_actions, context=context
         )
@@ -253,7 +231,7 @@ class SlatesPersonalizerChain(base.RLChain):
         event: SlatesPersonalizerChain.Event,
         vwpreds: List[List[Tuple[int, float]]],
     ) -> Tuple[Dict[str, Any], SlatesPersonalizerChain.Event]:
-        label = SlatesLabel(vwpred=vwpreds)
+        label = SlatesPersonalizerChain.Label(vwpred=vwpreds)
         event.label = label
 
         preds = {}

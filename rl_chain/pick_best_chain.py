@@ -12,33 +12,12 @@ from langchain.prompts.prompt import PromptTemplate
 
 from langchain.callbacks.manager import CallbackManagerForChainRun
 from langchain.chains.base import Chain
-import vowpal_wabbit_next as vw
 from typing import Any, Dict, List, Optional, Tuple, Union
 
 import numpy as np
 from langchain.base_language import BaseLanguageModel
 from langchain.chains.llm import LLMChain
 from sentence_transformers import SentenceTransformer
-
-
-class PickBestLabel(base.Label):
-    chosen_action: int
-    chosen_action_probability: float
-    cost: Optional[float]
-
-    def __init__(self, vwpred: List[Tuple[int, float]], cost: Optional[float] = None):
-        prob_sum = sum(prob for _, prob in vwpred)
-        probabilities = [prob / prob_sum for _, prob in vwpred]
-
-        ## explore
-        sampled_index = np.random.choice(len(vwpred), p=probabilities)
-        sampled_ap = vwpred[sampled_index]
-        sampled_action = sampled_ap[0]
-        sampled_prob = sampled_ap[1]
-
-        self.chosen_action = sampled_action
-        self.chosen_action_probability = sampled_prob
-        self.cost = cost
 
 
 class ContextualBanditTextEmbedder(base.Embedder):
@@ -54,28 +33,6 @@ class ContextualBanditTextEmbedder(base.Embedder):
             self.model = SentenceTransformer("bert-base-nli-mean-tokens")
         else:
             self.model = SentenceTransformer(model_name)
-
-    def embed_actions(self, actions: List):
-        """
-        Embeds the actions using the SentenceTransformer model
-        
-        Attributes:
-            actions: (List, required) The list of actions for the VW model to choose from. This list can either be a List of str's or a List of Dict's.
-            - If actions are provided as a list of strings (e.g. actions = ["action1", "action2", "action3"]), each action will be assigned to the Vowpal Wabbit namespace, labelled `Actions`.
-            - If actions are provided as a list of dictionaries, each action should be a dictionary where the keys are namespace names and the values are the corresponding action strings (e.g. actions = [{"namespace1": "action1", "namespace2": "action2"}, {"namespace1": "action3", "namespace2": "action4"}])
-        """
-        return base.embed(actions, self.model, "Actions")
-
-    def embed_context(self, context: Any):
-        """
-        Embeds the context using the SentenceTransformer model
-
-        Attributes:
-            context: (Any, required) The context for the VW model to use when choosing an action. This can either be a str or a Dict.
-            - If context is provided as a string (e.g. "context"), the context will be assigned to the Vowpal Wabbit namespace, labelled `Context`.
-            - If context is provided as a dictionary, then it should be a single dictionary where the keys are namespace names and the values are the corresponding strings of the context (e.g. {"namespace1": "part of context", "namespace2": "another part of the context"})
-        """
-        return base.embed(context, self.model, "Context")
 
     def to_vw_format(self, event: PickBest.Event) -> str:
         """
@@ -95,8 +52,11 @@ class ContextualBanditTextEmbedder(base.Embedder):
             cost = event.label.cost
             prob = event.label.chosen_action_probability
 
-        context_emb = self.embed_context(event.context) if event.context else None
-        action_embs = self.embed_actions(event.actions) if event.actions else None
+        context_emb = base.embed(event.context, self.model) if event.context else None
+        actions_var_name, actions = next(iter(event.actions.items()))
+        action_embs = (
+            base.embed(actions, self.model, actions_var_name) if event.actions else None
+        )
 
         if not context_emb or not action_embs:
             raise ValueError(
@@ -186,13 +146,34 @@ class PickBest(base.RLChain):
         text_embedder: (ContextualBanditTextEmbedder, optional) The text embedder to use for embedding the context and the actions. If not provided, a default embedder is used.
     """
 
+    class Label(base.Label):
+        chosen_action: int
+        chosen_action_probability: float
+        cost: Optional[float]
+
+        def __init__(
+            self, vwpred: List[Tuple[int, float]], cost: Optional[float] = None
+        ):
+            prob_sum = sum(prob for _, prob in vwpred)
+            probabilities = [prob / prob_sum for _, prob in vwpred]
+
+            ## explore
+            sampled_index = np.random.choice(len(vwpred), p=probabilities)
+            sampled_ap = vwpred[sampled_index]
+            sampled_action = sampled_ap[0]
+            sampled_prob = sampled_ap[1]
+
+            self.chosen_action = sampled_action
+            self.chosen_action_probability = sampled_prob
+            self.cost = cost
+
     class Event(base.Event):
         def __init__(
             self,
             inputs: Dict[str, Any],
             actions: Dict[str, Any],
             context: Dict[str, Any],
-            label: Optional[PickBestLabel] = None,
+            label: Optional[PickBest.Label] = None,
         ):
             super().__init__(inputs=inputs, label=label)
             self.actions = actions
@@ -228,49 +209,6 @@ class PickBest(base.RLChain):
 
         super().__init__(text_embedder=text_embedder, *args, **kwargs)
 
-    def _get_action_variable_name(self, inputs: Dict[str, Any]) -> str:
-        for avr in inputs.keys():
-            if isinstance(inputs[avr], base._ToSelectFrom):
-                return avr
-        else:
-            raise ValueError(
-                "No variables using 'ToSelectFrom' found in the inputs. Please include at least one variable containing a list to select from."
-            )
-
-    def _get_context_and_actions(self, inputs: Dict[str, Any]):
-        named_actions = {
-            k: inputs[k].value
-            for k in inputs.keys()
-            if isinstance(inputs[k], base._ToSelectFrom)
-        }
-
-        if not named_actions:
-            raise ValueError(
-                "No variables using 'ToSelectFrom' found in the inputs. Please include at least one variable containing a list to select from."
-            )
-
-        actions = list(named_actions.values())
-        if len(actions) > 1:
-            raise ValueError(
-                "Only one variable using 'ToSelectFrom' can be provided in the inputs for the PickBest chain. Please provide only one variable containing a list to select from."
-            )
-        actions = actions[0]
-
-        context = {
-            k: inputs[k].value
-            if isinstance(inputs[k].value, list)
-            else [inputs[k].value]
-            for k in inputs.keys()
-            if isinstance(inputs[k], base._BasedOn)
-        }
-
-        if not context:
-            raise ValueError(
-                "No variables using 'BasedOn' found in the inputs. Please include at least one variable containing information to base the selection of ToSelectFrom on."
-            )
-
-        return context, actions
-
     def _validate_inputs(self, inputs: Dict[str, Any]) -> None:
         super()._validate_inputs(inputs)
         if (
@@ -282,31 +220,47 @@ class PickBest(base.RLChain):
             )
 
     def call_before_predict(self, inputs: Dict[str, Any]) -> PickBest.Event:
-        context, actions = self._get_context_and_actions(inputs=inputs)
+        context, actions = self.get_context_and_actions(inputs=inputs)
+        if not actions:
+            raise ValueError(
+                "No variables using 'ToSelectFrom' found in the inputs. Please include at least one variable containing a list to select from."
+            )
+
+        if len(list(actions.values())) > 1:
+            raise ValueError(
+                "Only one variable using 'ToSelectFrom' can be provided in the inputs for the PickBest chain. Please provide only one variable containing a list to select from."
+            )
+
+        if not context:
+            raise ValueError(
+                "No variables using 'BasedOn' found in the inputs. Please include at least one variable containing information to base the selection of ToSelectFrom on."
+            )
+
         event = PickBest.Event(inputs=inputs, actions=actions, context=context)
         return event
 
     def call_after_predict_before_llm(
         self, inputs: Dict[str, Any], event: Event, vwpreds: List[Tuple[int, float]]
     ) -> Tuple[Dict[str, Any], PickBest.Event]:
-        label = PickBestLabel(vwpred=vwpreds)
-        pred_action = event.actions[label.chosen_action]
+        label = PickBest.Label(vwpred=vwpreds)
         event.label = label
 
-        action_variable_name = self._get_action_variable_name(inputs=inputs)
+        # only one key, value pair in event.actions
+        key, value = next(iter(event.actions.items()))
         next_chain_inputs = inputs.copy()
-        next_chain_inputs.update({action_variable_name: pred_action})
-
+        next_chain_inputs.update({key: value[event.label.chosen_action]})
         return next_chain_inputs, event
 
     def call_after_llm_before_scoring(
         self, llm_response: str, event: PickBest.Event
     ) -> Tuple[Dict[str, Any], PickBest.Event]:
         next_chain_inputs = event.inputs.copy()
+        # only one key, value pair in event.actions
+        value = next(iter(event.actions.values()))
         next_chain_inputs.update(
             {
                 self.best_pick_context_input_key: str(event.context),
-                self.best_pick_input_key: event.actions[event.label.chosen_action],
+                self.best_pick_input_key: value[event.label.chosen_action],
             }
         )
         return next_chain_inputs, event

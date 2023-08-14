@@ -254,6 +254,28 @@ class RLChain(Chain):
         """
         return [self.output_key]
 
+    def get_context_and_actions(self, inputs: Dict[str, Any]):
+        named_actions = {
+            k: inputs[k].value
+            for k in inputs.keys()
+            if isinstance(inputs[k], _ToSelectFrom)
+        }
+
+        if not named_actions:
+            raise ValueError(
+                "No variables using 'ToSelectFrom' found in the inputs. Please include at least one variable containing a list to select from."
+            )
+
+        context = {
+            k: inputs[k].value
+            if isinstance(inputs[k].value, list)
+            else [inputs[k].value]
+            for k in inputs.keys()
+            if isinstance(inputs[k], _BasedOn)
+        }
+
+        return context, named_actions
+
     @abstractmethod
     def call_before_predict(self, inputs: Dict[str, Any]) -> Event:
         pass
