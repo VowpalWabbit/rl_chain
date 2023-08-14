@@ -166,15 +166,18 @@ class LLMResponseValidatorForSlates(base.ResponseValidator):
 
 class SlatesPersonalizerChain(base.RLChain):
     class Label(base.Label):
-        chosen: List[int]
-        p: List[float]
+        chosen: Optional[List[int]]
+        chosen_probabilities: Optional[List[float]]
         cost: Optional[float]
 
         def __init__(
-            self, vwpred: List[List[Tuple[int, float]]], cost: Optional[float] = None
+            self,
+            chosen: Optional[List[int]] = None,
+            chosen_probabilities: Optional[List[float]] = None,
+            cost: Optional[float] = None,
         ):
-            self.chosen = [p[0][0] for p in vwpred]
-            self.p = [p[0][1] for p in vwpred]
+            self.chosen = chosen
+            self.chosen_probabilities = chosen_probabilities
             self.cost = cost
 
         def get_actions_and_probs(self):
@@ -230,7 +233,11 @@ class SlatesPersonalizerChain(base.RLChain):
         event: SlatesPersonalizerChain.Event,
         vwpreds: List[List[Tuple[int, float]]],
     ) -> Tuple[Dict[str, Any], SlatesPersonalizerChain.Event]:
-        label = SlatesPersonalizerChain.Label(vwpred=vwpreds)
+        chosen = [p[0][0] for p in vwpreds]
+        probabilities = [p[0][1] for p in vwpreds]
+        label = SlatesPersonalizerChain.Label(
+            chosen=chosen, chosen_probabilities=probabilities
+        )
         event.label = label
 
         preds = {}

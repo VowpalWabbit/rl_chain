@@ -147,24 +147,18 @@ class PickBest(base.RLChain):
     """
 
     class Label(base.Label):
-        chosen_action: int
-        chosen_action_probability: float
+        chosen_action: Optional[int]
+        chosen_action_probability: Optional[float]
         cost: Optional[float]
 
         def __init__(
-            self, vwpred: List[Tuple[int, float]], cost: Optional[float] = None
+            self,
+            chosen_action: Optional[int] = None,
+            chosen_action_probability: Optional[float] = None,
+            cost: Optional[float] = None,
         ):
-            prob_sum = sum(prob for _, prob in vwpred)
-            probabilities = [prob / prob_sum for _, prob in vwpred]
-
-            ## explore
-            sampled_index = np.random.choice(len(vwpred), p=probabilities)
-            sampled_ap = vwpred[sampled_index]
-            sampled_action = sampled_ap[0]
-            sampled_prob = sampled_ap[1]
-
-            self.chosen_action = sampled_action
-            self.chosen_action_probability = sampled_prob
+            self.chosen_action = chosen_action
+            self.chosen_action_probability = chosen_action_probability
             self.cost = cost
 
     class Event(base.Event):
@@ -242,7 +236,16 @@ class PickBest(base.RLChain):
     def call_after_predict_before_llm(
         self, inputs: Dict[str, Any], event: Event, vwpreds: List[Tuple[int, float]]
     ) -> Tuple[Dict[str, Any], PickBest.Event]:
-        label = PickBest.Label(vwpred=vwpreds)
+        prob_sum = sum(prob for _, prob in vwpreds)
+        probabilities = [prob / prob_sum for _, prob in vwpreds]
+        ## sample from the pmf
+        sampled_index = np.random.choice(len(vwpreds), p=probabilities)
+        sampled_ap = vwpreds[sampled_index]
+        sampled_action = sampled_ap[0]
+        sampled_prob = sampled_ap[1]
+        label = PickBest.Label(
+            chosen_action=sampled_action, chosen_action_probability=sampled_prob
+        )
         event.label = label
 
         # only one key, value pair in event.actions
