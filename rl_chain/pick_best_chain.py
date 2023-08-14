@@ -1,3 +1,5 @@
+from __future__ import annotations
+
 from . import rl_chain_base as base
 
 from langchain.prompts import (
@@ -10,7 +12,6 @@ from langchain.prompts.prompt import PromptTemplate
 
 from langchain.callbacks.manager import CallbackManagerForChainRun
 from langchain.chains.base import Chain
-import vowpal_wabbit_next as vw
 from typing import Any, Dict, List, Optional, Tuple, Union
 
 import numpy as np
@@ -33,35 +34,7 @@ class ContextualBanditTextEmbedder(base.Embedder):
         else:
             self.model = SentenceTransformer(model_name)
 
-    def embed_actions(self, actions: List):
-        """
-        Embeds the actions using the SentenceTransformer model
-        
-        Attributes:
-            actions: (List, required) The list of actions for the VW model to choose from. This list can either be a List of str's or a List of Dict's.
-            - If actions are provided as a list of strings (e.g. actions = ["action1", "action2", "action3"]), each action will be assigned to the Vowpal Wabbit namespace, labelled `Actions`.
-            - If actions are provided as a list of dictionaries, each action should be a dictionary where the keys are namespace names and the values are the corresponding action strings (e.g. actions = [{"namespace1": "action1", "namespace2": "action2"}, {"namespace1": "action3", "namespace2": "action4"}])
-        """
-        return base.embed(actions, self.model, "Actions")
-
-    def embed_context(self, context: Any):
-        """
-        Embeds the context using the SentenceTransformer model
-
-        Attributes:
-            context: (Any, required) The context for the VW model to use when choosing an action. This can either be a str or a Dict.
-            - If context is provided as a string (e.g. "context"), the context will be assigned to the Vowpal Wabbit namespace, labelled `Context`.
-            - If context is provided as a dictionary, then it should be a single dictionary where the keys are namespace names and the values are the corresponding strings of the context (e.g. {"namespace1": "part of context", "namespace2": "another part of the context"})
-        """
-        return base.embed(context, self.model, "Context")
-
-    def to_vw_format(
-        self,
-        inputs: Dict[str, Any],
-        actions: List[Any],
-        context: Dict[str, Any],
-        cb_label: Optional[Tuple] = None,
-    ) -> str:
+    def to_vw_format(self, event: PickBest.Event) -> str:
         """
         Converts the context and actions into a format that can be used by VW
 
@@ -74,11 +47,16 @@ class ContextualBanditTextEmbedder(base.Embedder):
         Returns:    
         """
 
-        if cb_label:
-            chosen_action, cost, prob = cb_label
+        if event.label:
+            chosen_action = event.label.chosen_action
+            cost = event.label.cost
+            prob = event.label.chosen_action_probability
 
-        context_emb = self.embed_context(context) if context else None
-        action_embs = self.embed_actions(actions) if actions else None
+        context_emb = base.embed(event.context, self.model) if event.context else None
+        actions_var_name, actions = next(iter(event.actions.items()))
+        action_embs = (
+            base.embed(actions, self.model, actions_var_name) if event.actions else None
+        )
 
         if not context_emb or not action_embs:
             raise ValueError(
@@ -93,7 +71,7 @@ class ContextualBanditTextEmbedder(base.Embedder):
         example_string += "\n"
 
         for i, action in enumerate(action_embs):
-            if cb_label and chosen_action == i:
+            if event.label and chosen_action == i:
                 example_string += f"{chosen_action}:{cost}:{prob} "
             for ns, action_embedding in action.items():
                 example_string += f"|{ns} {' '.join(action_embedding) if isinstance(action_embedding, list) else action_embedding} "
@@ -126,9 +104,7 @@ class AutoValidatePickBest(base.ResponseValidator):
 
         self.llm_chain = LLMChain(llm=llm, prompt=self.prompt)
 
-    def grade_response(
-        self, inputs: Dict[str, Any], llm_response: str, **kwargs
-    ) -> float:
+    def grade_response(self, inputs: Dict[str, Any], llm_response: str) -> float:
         ranking = self.llm_chain.predict(llm_response=llm_response, **inputs)
         ranking = ranking.strip()
         try:
@@ -170,27 +146,42 @@ class PickBest(base.RLChain):
         text_embedder: (ContextualBanditTextEmbedder, optional) The text embedder to use for embedding the context and the actions. If not provided, a default embedder is used.
     """
 
-    class ResponseResult:
+    class Label(base.Label):
+        chosen_action: Optional[int]
+        chosen_action_probability: Optional[float]
+        cost: Optional[float]
+
         def __init__(
             self,
-            chosen_action: int,
-            chosen_action_probability: float,
-            cost: Optional[float],
-            inputs: Dict[str, Any],
+            chosen_action: Optional[int] = None,
+            chosen_action_probability: Optional[float] = None,
+            cost: Optional[float] = None,
         ):
             self.chosen_action = chosen_action
             self.chosen_action_probability = chosen_action_probability
             self.cost = cost
-            self.inputs = inputs
 
-    latest_response: Optional[ResponseResult] = None
-    text_embedder: ContextualBanditTextEmbedder = ContextualBanditTextEmbedder(
-        "bert-base-nli-mean-tokens"
-    )
+    class Event(base.Event):
+        def __init__(
+            self,
+            inputs: Dict[str, Any],
+            actions: Dict[str, Any],
+            context: Dict[str, Any],
+            label: Optional[PickBest.Label] = None,
+        ):
+            super().__init__(inputs=inputs, label=label)
+            self.actions = actions
+            self.context = context
+
     best_pick_input_key = "best_pick"
     best_pick_context_input_key = "best_pick_context"
 
-    def __init__(self, *args, **kwargs):
+    def __init__(
+        self,
+        text_embedder: Optional[ContextualBanditTextEmbedder] = None,
+        *args,
+        **kwargs,
+    ):
         vw_cmd = kwargs.get("vw_cmd", [])
         if not vw_cmd:
             vw_cmd = [
@@ -207,51 +198,10 @@ class PickBest(base.RLChain):
                 )
 
         kwargs["vw_cmd"] = vw_cmd
+        if not text_embedder:
+            text_embedder = ContextualBanditTextEmbedder("bert-base-nli-mean-tokens")
 
-        super().__init__(*args, **kwargs)
-
-    def _get_action_variable_name(self, inputs: Dict[str, Any]) -> str:
-        for avr in inputs.keys():
-            if isinstance(inputs[avr], base._ToSelectFrom):
-                return avr
-        else:
-            raise ValueError(
-                "No variables using 'ToSelectFrom' found in the inputs. Please include at least one variable containing a list to select from."
-            )
-
-    def _get_context_and_actions(self, inputs: Dict[str, Any]):
-        named_actions = {
-            k: inputs[k].value
-            for k in inputs.keys()
-            if isinstance(inputs[k], base._ToSelectFrom)
-        }
-
-        if not named_actions:
-            raise ValueError(
-                "No variables using 'ToSelectFrom' found in the inputs. Please include at least one variable containing a list to select from."
-            )
-
-        actions = list(named_actions.values())
-        if len(actions) > 1:
-            raise ValueError(
-                "Only one variable using 'ToSelectFrom' can be provided in the inputs for the PickBest chain. Please provide only one variable containing a list to select from."
-            )
-        actions = actions[0]
-
-        context = {
-            k: inputs[k].value
-            if isinstance(inputs[k].value, list)
-            else [inputs[k].value]
-            for k in inputs.keys()
-            if isinstance(inputs[k], base._BasedOn)
-        }
-
-        if not context:
-            raise ValueError(
-                "No variables using 'BasedOn' found in the inputs. Please include at least one variable containing information to base the selection of ToSelectFrom on."
-            )
-
-        return context, actions
+        super().__init__(text_embedder=text_embedder, *args, **kwargs)
 
     def _validate_inputs(self, inputs: Dict[str, Any]) -> None:
         super()._validate_inputs(inputs)
@@ -262,6 +212,72 @@ class PickBest(base.RLChain):
             raise ValueError(
                 f"The PickBest chain does not accept '{self.best_pick_input_key}' or '{self.best_pick_context_input_key}' as input keys, they are reserved for internal use during auto reward."
             )
+
+    def call_before_predict(self, inputs: Dict[str, Any]) -> PickBest.Event:
+        context, actions = base.get_context_and_actions(inputs=inputs)
+        if not actions:
+            raise ValueError(
+                "No variables using 'ToSelectFrom' found in the inputs. Please include at least one variable containing a list to select from."
+            )
+
+        if len(list(actions.values())) > 1:
+            raise ValueError(
+                "Only one variable using 'ToSelectFrom' can be provided in the inputs for the PickBest chain. Please provide only one variable containing a list to select from."
+            )
+
+        if not context:
+            raise ValueError(
+                "No variables using 'BasedOn' found in the inputs. Please include at least one variable containing information to base the selection of ToSelectFrom on."
+            )
+
+        event = PickBest.Event(inputs=inputs, actions=actions, context=context)
+        return event
+
+    def call_after_predict_before_llm(
+        self, inputs: Dict[str, Any], event: Event, vwpreds: List[Tuple[int, float]]
+    ) -> Tuple[Dict[str, Any], PickBest.Event]:
+        prob_sum = sum(prob for _, prob in vwpreds)
+        probabilities = [prob / prob_sum for _, prob in vwpreds]
+        ## sample from the pmf
+        sampled_index = np.random.choice(len(vwpreds), p=probabilities)
+        sampled_ap = vwpreds[sampled_index]
+        sampled_action = sampled_ap[0]
+        sampled_prob = sampled_ap[1]
+        label = PickBest.Label(
+            chosen_action=sampled_action, chosen_action_probability=sampled_prob
+        )
+        event.label = label
+
+        # only one key, value pair in event.actions
+        key, value = next(iter(event.actions.items()))
+        next_chain_inputs = inputs.copy()
+        next_chain_inputs.update({key: value[event.label.chosen_action]})
+        return next_chain_inputs, event
+
+    def call_after_llm_before_scoring(
+        self, llm_response: str, event: PickBest.Event
+    ) -> Tuple[Dict[str, Any], PickBest.Event]:
+        next_chain_inputs = event.inputs.copy()
+        # only one key, value pair in event.actions
+        value = next(iter(event.actions.values()))
+        next_chain_inputs.update(
+            {
+                self.best_pick_context_input_key: str(event.context),
+                self.best_pick_input_key: value[event.label.chosen_action],
+            }
+        )
+        return next_chain_inputs, event
+
+    def call_after_scoring_before_learning(
+        self,
+        llm_response: str,
+        event: PickBest.Event,
+        response_quality: Optional[float],
+    ) -> Event:
+        event.label.cost = (
+            -1.0 * response_quality if response_quality is not None else None
+        )
+        return event
 
     def _call(
         self,
@@ -278,79 +294,10 @@ class PickBest(base.RLChain):
         Returns:
             A dictionary containing:
                 - `response`: The response generated by the LLM (Language Model).
-                - `response_result`: A ResponseResult object containing all the information needed to learn the reward for the chosen action at a later point. If an automatic response_validator is not provided, then this object can be used at a later point with the `learn_delayed_reward()` function to learn the delayed reward and update the Vowpal Wabbit model.
+                - `response_result`: A Event object containing all the information needed to learn the reward for the chosen action at a later point. If an automatic response_validator is not provided, then this object can be used at a later point with the `learn_delayed_reward()` function to learn the delayed reward and update the Vowpal Wabbit model.
                     - the `cost` in the `response_result` object is set to None if an automatic response_validator is not provided or if the response_validator failed (e.g. LLM timeout or LLM failed to rank correctly).
         """
-        _run_manager = run_manager or CallbackManagerForChainRun.get_noop_manager()
-        if self.workspace is None:
-            raise RuntimeError("Workspace must be set before calling the chain")
-        text_parser = vw.TextFormatParser(self.workspace)
-
-        context, actions = self._get_context_and_actions(inputs=inputs)
-        action_variable_name = self._get_action_variable_name(inputs=inputs)
-
-        vw_ex = self.text_embedder.to_vw_format(
-            inputs=inputs, actions=actions, context=context
-        )
-
-        multi_ex = base.parse_lines(text_parser, vw_ex)
-        preds: List[Tuple[int, float]] = self.workspace.predict_one(multi_ex)
-        prob_sum = sum(prob for _, prob in preds)
-        probabilities = [prob / prob_sum for _, prob in preds]
-
-        ## explore
-        sampled_index = np.random.choice(len(preds), p=probabilities)
-        sampled_ap = preds[sampled_index]
-        sampled_action = sampled_ap[0]
-        sampled_prob = sampled_ap[1]
-
-        pred_action = actions[sampled_action]
-
-        next_chain_inputs = inputs.copy()
-        next_chain_inputs.update({action_variable_name: pred_action})
-
-        llm_resp: Dict[str, Any] = super()._call(
-            run_manager=run_manager, inputs=next_chain_inputs
-        )
-        latest_cost = None
-
-        if self.response_validator:
-            try:
-                next_chain_inputs.update(
-                    {
-                        self.best_pick_context_input_key: str(context),
-                        self.best_pick_input_key: pred_action,
-                    }
-                )
-                cost = -1.0 * self.response_validator.grade_response(
-                    inputs=next_chain_inputs, llm_response=llm_resp[self.output_key]
-                )
-                latest_cost = cost
-                cb_label = (sampled_action, cost, sampled_prob)
-
-                vw_ex = self.text_embedder.to_vw_format(
-                    cb_label=cb_label, inputs=inputs, actions=actions, context=context
-                )
-                self._learn(vw_ex)
-
-            except Exception as e:
-                base.logger.info(
-                    f"The LLM was not able to rank and the chain was not able to adjust to this response. Error: {e}"
-                )
-
-        self.latest_response = PickBest.ResponseResult(
-            chosen_action=sampled_action,
-            chosen_action_probability=sampled_prob,
-            inputs=inputs,
-            cost=latest_cost,
-        )
-
-        llm_resp[self.output_key] = {
-            "response": llm_resp[self.output_key],
-            "response_result": self.latest_response,
-        }
-
-        return llm_resp
+        return super()._call(run_manager=run_manager, inputs=inputs)
 
     @property
     def _chain_type(self) -> str:
@@ -365,8 +312,9 @@ class PickBest(base.RLChain):
         llm_chain = LLMChain(llm=llm, prompt=prompt)
         return PickBest.from_chain(llm_chain=llm_chain, prompt=prompt, **kwargs)
 
+    # TODO needs some moving to base
     def learn_delayed_reward(
-        self, reward: float, response_result: ResponseResult, force_reward=False
+        self, reward: float, response_result: Event, force_reward=False
     ) -> None:
         """
         Learn will be called with the reward specified and the actions/embeddings/etc stored in response_result
@@ -379,19 +327,5 @@ class PickBest(base.RLChain):
                 "check_response is set to True, this must be turned off for explicit feedback and training to be provided, or overriden by calling the method with force_reward=True"
             )
         cost = -1.0 * reward
-        cb_label = (
-            response_result.chosen_action,
-            cost,
-            response_result.chosen_action_probability,
-        )
-
-        inputs = response_result.inputs
-        context, actions = self._get_context_and_actions(inputs=inputs)
-
-        vw_ex = self.text_embedder.to_vw_format(
-            cb_label=cb_label,
-            inputs=response_result.inputs,
-            actions=actions,
-            context=context,
-        )
-        self._learn(vw_ex)
+        response_result.label.cost = cost
+        self.policy.learn(event=response_result)
