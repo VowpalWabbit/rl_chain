@@ -215,11 +215,10 @@ class SlatesPersonalizerChain(base.RLChain):
 
         super().__init__(text_embedder=text_embedder, *args, **kwargs)
 
-
     def call_before_predict(
         self, inputs: Dict[str, Any]
     ) -> SlatesPersonalizerChain.Event:
-        context, named_actions = self.get_context_and_actions(inputs)
+        context, named_actions = base.get_context_and_actions(inputs=inputs)
         event = SlatesPersonalizerChain.Event(
             inputs=inputs, actions=named_actions, context=context
         )

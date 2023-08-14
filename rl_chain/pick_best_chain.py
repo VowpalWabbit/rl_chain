@@ -220,7 +220,7 @@ class PickBest(base.RLChain):
             )
 
     def call_before_predict(self, inputs: Dict[str, Any]) -> PickBest.Event:
-        context, actions = self.get_context_and_actions(inputs=inputs)
+        context, actions = base.get_context_and_actions(inputs=inputs)
         if not actions:
             raise ValueError(
                 "No variables using 'ToSelectFrom' found in the inputs. Please include at least one variable containing a list to select from."
