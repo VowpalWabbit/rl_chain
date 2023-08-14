@@ -181,7 +181,7 @@ class SlatesPersonalizerChain(base.RLChain):
             self.cost = cost
 
         def get_actions_and_probs(self):
-            return zip(self.chosen, self.p)
+            return zip(self.chosen, self.chosen_probabilities)
 
     class Event(base.Event):
         def __init__(
