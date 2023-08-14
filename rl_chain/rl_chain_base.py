@@ -6,7 +6,6 @@ import re
 import os
 from typing import Any, Dict, List, Optional, Tuple, Union
 from abc import ABC, abstractmethod
-from collections import defaultdict
 
 import vowpal_wabbit_next as vw
 from .vw_logger import VwLogger
@@ -163,8 +162,9 @@ class VwPolicy(Policy):
         self.workspace.learn_one(multi_ex)
 
     def log(self, event: Event):
-        vw_ex = self.text_embedder.to_vw_format(event)
-        self.logger.log(vw_ex)
+        if self.logger.logging_enabled():
+            vw_ex = self.text_embedder.to_vw_format(event)
+            self.logger.log(vw_ex)
 
 
 class Embedder(ABC):
@@ -219,7 +219,7 @@ class RLChain(Chain):
         super().__init__(*args, **kwargs)
         if self.response_validator is None:
             logger.warning(
-                "No response validator provided. This is not recommended for RLChains."
+                "No response validator provided, which means that no reinforcement learning will be done in the RL chain unless learn_delayed_reward is called."
             )
         next_checkpoint = 1
         serialized_workspace = None
@@ -282,26 +282,42 @@ class RLChain(Chain):
         return [self.output_key]
 
     @abstractmethod
-    def call_before_predict(self, inputs: Dict[str, Any]) -> Event:
+    def _call_before_predict(self, inputs: Dict[str, Any]) -> Event:
         pass
 
     @abstractmethod
-    def call_after_predict_before_llm(
+    def _call_after_predict_before_llm(
         self, inputs: Dict[str, Any], event: Event, vwpreds: Any
     ) -> Tuple[Dict[str, Any], Event]:
         pass
 
     @abstractmethod
-    def call_after_llm_before_scoring(
+    def _call_after_llm_before_scoring(
         self, llm_response: str, event: Event
     ) -> Tuple[Dict[str, Any], Event]:
         pass
 
     @abstractmethod
-    def call_after_scoring_before_learning(
-        self, llm_response: str, event: Event, response_quality: Optional[float]
+    def _call_after_scoring_before_learning(
+        self, event: Event, response_quality: Optional[float]
     ) -> Event:
         pass
+
+    def learn_delayed_reward(
+        self, reward: float, event: Event, force_reward=False
+    ) -> None:
+        """
+        Learn will be called with the reward specified and the actions/embeddings/etc stored in event
+
+        Will raise an error if response_validator is set, and force_reward=True was not provided during the method call
+        """
+        if self.response_validator and not force_reward:
+            raise RuntimeError(
+                "The response validator is set, and force_reward was not set to True. Please set force_reward=True to use this function."
+            )
+        self._call_after_scoring_before_learning(event=event, response_quality=reward)
+        self.policy.learn(event=event)
+        self.policy.log(event=event)
 
     def _call(
         self,
@@ -310,10 +326,10 @@ class RLChain(Chain):
     ) -> Dict[str, str]:
         _run_manager = run_manager or CallbackManagerForChainRun.get_noop_manager()
 
-        event = self.call_before_predict(inputs=inputs)
+        event = self._call_before_predict(inputs=inputs)
         vw_pred = self.policy.predict(event=event)
 
-        next_chain_inputs, event = self.call_after_predict_before_llm(
+        next_chain_inputs, event = self._call_after_predict_before_llm(
             inputs=inputs, event=event, vwpreds=vw_pred
         )
 
@@ -328,7 +344,7 @@ class RLChain(Chain):
         _run_manager.on_text("\nAnswer: ", verbose=self.verbose)
         _run_manager.on_text(output, color="yellow", verbose=self.verbose)
 
-        next_chain_inputs, event = self.call_after_llm_before_scoring(
+        next_chain_inputs, event = self._call_after_llm_before_scoring(
             llm_response=output, event=event
         )
 
@@ -343,14 +359,13 @@ class RLChain(Chain):
                 f"The LLM was not able to rank and the chain was not able to adjust to this response, error: {e}"
             )
 
-        event = self.call_after_scoring_before_learning(
-            llm_response=output, response_quality=response_quality, event=event
+        event = self._call_after_scoring_before_learning(
+            response_quality=response_quality, event=event
         )
-
         self.policy.learn(event=event)
         self.policy.log(event=event)
 
-        return {self.output_key: {"response": output, "response_result": event}}
+        return {self.output_key: {"response": output, "decision_metadata": event}}
 
     def save_progress(self) -> None:
         """
