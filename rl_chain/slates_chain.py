@@ -96,7 +96,7 @@ class RandomPolicy(base.Policy):
     def predict(self, event: SlatesPersonalizerChain.Event) -> Any:
         return [
             [(random.randint(0, len(slot) - 1), 1.0 / len(slot))]
-            for slot in self.text_embedder.to_action_features(event.actions)
+            for slot in event.actions
         ]
 
     def learn(self, event: SlatesPersonalizerChain.Event) -> Any:
@@ -112,7 +112,7 @@ class FirstChoicePolicy(base.Policy):
 
     def predict(self, event: SlatesPersonalizerChain.Event) -> Any:
         return [
-            [(0, 1)] for slot in self.text_embedder.to_action_features(event.actions)
+            [(0, 1)] for _ in event.actions
         ]
 
     def learn(self, event: SlatesPersonalizerChain.Event) -> Any:
