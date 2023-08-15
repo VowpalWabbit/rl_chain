@@ -1,7 +1,7 @@
 from pathlib import Path
 import shutil
 import datetime
-import vowpalwabbit as vw
+import vowpal_wabbit_next as vw
 from typing import Union, Sequence
 import os
 import logging
