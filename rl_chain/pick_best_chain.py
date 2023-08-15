@@ -20,19 +20,20 @@ from langchain.chains.llm import LLMChain
 from sentence_transformers import SentenceTransformer
 
 
-class ContextualBanditTextEmbedder(base.Embedder):
+class PickBestTextEmbedder(base.Embedder):
     """
     Contextual Bandit Text Embedder class that embeds the context and actions into a format that can be used by VW
     
     Attributes:
-        embeddings_model name (SentenceTransformer, optional): The type of embeddings to be used for feature representation. Defaults to BERT.
+        model name (Any, optional): The type of embeddings to be used for feature representation. Defaults to BERT SentenceTransformer.
     """
+    def __init__(self, model: Optional[Any] = None, *args, **kwargs):
+        super().__init__(*args, **kwargs)
 
-    def __init__(self, model_name: Optional[str] = None):
-        if not model_name:
-            self.model = SentenceTransformer("bert-base-nli-mean-tokens")
-        else:
-            self.model = SentenceTransformer(model_name)
+        if model is None:
+            model = SentenceTransformer("bert-base-nli-mean-tokens")
+
+        self.model = model
 
     def to_vw_format(self, event: PickBest.Event) -> str:
         """
@@ -53,7 +54,7 @@ class ContextualBanditTextEmbedder(base.Embedder):
             prob = event.label.chosen_action_probability
 
         context_emb = base.embed(event.context, self.model) if event.context else None
-        actions_var_name, actions = next(iter(event.actions.items()))
+        actions_var_name, actions = next(iter(event.actions.items()), (None, None))
         action_embs = (
             base.embed(actions, self.model, actions_var_name) if event.actions else None
         )
@@ -71,7 +72,7 @@ class ContextualBanditTextEmbedder(base.Embedder):
         example_string += "\n"
 
         for i, action in enumerate(action_embs):
-            if event.label and chosen_action == i:
+            if event.label and event.label.cost is not None and chosen_action == i:
                 example_string += f"{chosen_action}:{cost}:{prob} "
             for ns, action_embedding in action.items():
                 example_string += f"|{ns} {' '.join(action_embedding) if isinstance(action_embedding, list) else action_embedding} "
@@ -80,7 +81,7 @@ class ContextualBanditTextEmbedder(base.Embedder):
         return example_string[:-1]
 
 
-class AutoValidatePickBest(base.ResponseValidator):
+class PickBestAutoResponseValidator(base.ResponseValidator):
     llm_chain: LLMChain
     prompt: PromptTemplate
     default_system_prompt = SystemMessagePromptTemplate.from_template(
@@ -98,7 +99,7 @@ class AutoValidatePickBest(base.ResponseValidator):
             )
 
             chat_prompt = ChatPromptTemplate.from_messages(
-                [AutoValidatePickBest.default_system_prompt, human_message_prompt]
+                [PickBestAutoResponseValidator.default_system_prompt, human_message_prompt]
             )
             self.prompt = chat_prompt
 
@@ -143,7 +144,7 @@ class PickBest(base.RLChain):
         RLChain
 
     Attributes:
-        text_embedder: (ContextualBanditTextEmbedder, optional) The text embedder to use for embedding the context and the actions. If not provided, a default embedder is used.
+        text_embedder: (PickBestTextEmbedder, optional) The text embedder to use for embedding the context and the actions. If not provided, a default embedder is used.
     """
 
     class Label(base.Label):
@@ -178,7 +179,7 @@ class PickBest(base.RLChain):
 
     def __init__(
         self,
-        text_embedder: Optional[ContextualBanditTextEmbedder] = None,
+        text_embedder: Optional[PickBestTextEmbedder] = None,
         *args,
         **kwargs,
     ):
@@ -199,7 +200,7 @@ class PickBest(base.RLChain):
 
         kwargs["vw_cmd"] = vw_cmd
         if not text_embedder:
-            text_embedder = ContextualBanditTextEmbedder("bert-base-nli-mean-tokens")
+            text_embedder = PickBestTextEmbedder()
 
         super().__init__(text_embedder=text_embedder, *args, **kwargs)
 

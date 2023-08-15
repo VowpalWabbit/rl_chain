@@ -30,7 +30,7 @@ class SlatesTextEmbedder(base.Embedder):
     Slates Text Embedder class that embeds the context and actions and slates into a format that can be used by VW
     
     Attributes:
-        embeddings_model (SentenceTransformer, optional): The type of embeddings to be used for feature representation. Defaults to BERT Sentence Transformer
+        model (Any, optional): The type of embeddings to be used for feature representation. Defaults to BERT Sentence Transformer
     """
 
     def __init__(self, model: Optional[Any] = None, *args, **kwargs):
@@ -89,7 +89,7 @@ class SlatesTextEmbedder(base.Embedder):
         return "\n".join(list(chain.from_iterable([[context_str], actions, slots])))
 
 
-class RandomPolicy(base.Policy):
+class SlatesRandomPolicy(base.Policy):
     def __init__(self, text_embedder: base.Embedder, *_, **__):
         self.text_embedder = text_embedder
 
@@ -106,7 +106,7 @@ class RandomPolicy(base.Policy):
         pass
 
 
-class FirstChoicePolicy(base.Policy):
+class SlatesFirstChoicePolicy(base.Policy):
     def __init__(self, text_embedder: base.Embedder, *_, **__):
         self.text_embedder = text_embedder
 
@@ -120,7 +120,7 @@ class FirstChoicePolicy(base.Policy):
         pass
 
 
-class LLMResponseValidatorForSlates(base.ResponseValidator):
+class SlatesAutoResponseValidator(base.ResponseValidator):
     llm_chain: LLMChain
     prompt: PromptTemplate
     default_system_prompt = SystemMessagePromptTemplate.from_template(
@@ -139,7 +139,7 @@ class LLMResponseValidatorForSlates(base.ResponseValidator):
 
             chat_prompt = ChatPromptTemplate.from_messages(
                 [
-                    LLMResponseValidatorForSlates.default_system_prompt,
+                    SlatesAutoResponseValidator.default_system_prompt,
                     human_message_prompt,
                 ]
             )
