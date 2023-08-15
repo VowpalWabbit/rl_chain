@@ -10,6 +10,7 @@ from collections import defaultdict
 
 import vowpal_wabbit_next as vw
 from .vw_logger import VwLogger
+from .model_repository import ModelRepository
 from langchain.prompts.prompt import PromptTemplate
 
 from pydantic import Extra, PrivateAttr
@@ -135,6 +136,9 @@ class Policy(ABC):
     def log(self, event: Event):
         pass
 
+    def save(self, model_repo: ModelRepository):
+        ...
+
 
 class VwPolicy(Policy):
     def __init__(
@@ -165,6 +169,9 @@ class VwPolicy(Policy):
     def log(self, event: Event):
         vw_ex = self.text_embedder.to_vw_format(event)
         self.logger.log(vw_ex)
+
+    def save(self, model_repo: ModelRepository):
+        model_repo.save(self.workspace)
 
 
 class Embedder(ABC):
@@ -198,8 +205,7 @@ class RLChain(Chain):
     """
 
     llm_chain: Chain
-    next_checkpoint: int = 1
-    model_save_dir: str = "./"
+    model_repo: ModelRepository = None
 
     output_key: str = "result"  #: :meta private:
     prompt: PromptTemplate
@@ -209,9 +215,10 @@ class RLChain(Chain):
     def __init__(
         self,
         text_embedder: Embedder,
-        model_loading=True,
-        vw_cmd=[],
-        policy=VwPolicy,
+        model_folder = "./",
+        reset_model = False,
+        vw_cmd = None,
+        policy = VwPolicy,
         vw_logs: Optional[Union[str, os.PathLike]] = None,
         *args,
         **kwargs,
@@ -221,43 +228,11 @@ class RLChain(Chain):
             logger.warning(
                 "No response validator provided. This is not recommended for RLChains."
             )
-        next_checkpoint = 1
-        serialized_workspace = None
-
-        os.makedirs(self.model_save_dir, exist_ok=True)
-
-        if model_loading:
-            vwfile = None
-            files = glob.glob(f"{self.model_save_dir}/*.vw")
-            pattern = r"model-(\d+)\.vw"
-            highest_checkpoint = 0
-            for file in files:
-                match = re.search(pattern, file)
-                if match:
-                    checkpoint = int(match.group(1))
-                    if checkpoint >= highest_checkpoint:
-                        highest_checkpoint = checkpoint
-                        vwfile = file
-
-            if vwfile:
-                with open(vwfile, "rb") as f:
-                    serialized_workspace = f.read()
-
-            next_checkpoint = highest_checkpoint + 1
-
-        self.next_checkpoint = next_checkpoint
-        logger.info(f"next model checkpoint = {self.next_checkpoint}")
-
-        logger.info(f"vw command: {vw_cmd}")
-        # initialize things
-        workspace = None
-        if serialized_workspace:
-            workspace = vw.Workspace(vw_cmd, model_data=serialized_workspace)
-        else:
-            workspace = vw.Workspace(vw_cmd)
-
+        self.model_repo = ModelRepository(model_folder, logger, with_history=True, reset=reset_model)
         self.policy = policy(
-            workspace=workspace, text_embedder=text_embedder, logger=VwLogger(vw_logs)
+            workspace=self.model_repo.load(vw_cmd or []),
+            text_embedder=text_embedder,
+            logger=VwLogger(vw_logs)
         )
 
     class Config:
@@ -365,12 +340,7 @@ class RLChain(Chain):
         Note:
             Be cautious when deleting or renaming checkpoint files manually, as this could cause the function to reuse checkpoint numbers.
         """
-        serialized_workspace = self.workspace.serialize()
-        logger.info(
-            f"storing in: {self.model_save_dir}/model-{self.next_checkpoint}.vw"
-        )
-        with open(f"{self.model_save_dir}/model-{self.next_checkpoint}.vw", "wb") as f:
-            f.write(serialized_workspace)
+        self.policy.save(self.model_repo)
 
     @property
     def _chain_type(self) -> str:
