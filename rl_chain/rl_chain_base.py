@@ -215,7 +215,7 @@ class RLChain(Chain):
     def __init__(
         self,
         text_embedder: Embedder,
-        model_folder = "./",
+        model_save_dir = "./",
         reset_model = False,
         vw_cmd = None,
         policy = VwPolicy,
@@ -228,7 +228,7 @@ class RLChain(Chain):
             logger.warning(
                 "No response validator provided. This is not recommended for RLChains."
             )
-        self.model_repo = ModelRepository(model_folder, logger, with_history=True, reset=reset_model)
+        self.model_repo = ModelRepository(model_save_dir, logger, with_history=True, reset=reset_model)
         self.policy = policy(
             workspace=self.model_repo.load(vw_cmd or []),
             text_embedder=text_embedder,

@@ -17,7 +17,7 @@ class ModelRepository:
         self.logger = logger
 
     def get_tag(self) -> str:
-        return datetime.now().strftime("%Y%m%d-%H%M%S")
+        return datetime.datetime.now().strftime("%Y%m%d-%H%M%S")
 
     def save(self, workspace: vw.Workspace) -> None:
         with open(self.model_path, "wb") as f:
@@ -29,7 +29,7 @@ class ModelRepository:
     def load(self, commandline: Sequence[str]) -> vw.Workspace:
         model_data = None
         if self.model_path.exists():
-            with open(self.model_file, "rb") as f:
+            with open(self.model_path, "rb") as f:
                 model_data = f.read()
         if model_data:
             self.logger.info(f'model is loaded from: {self.model_path}')
