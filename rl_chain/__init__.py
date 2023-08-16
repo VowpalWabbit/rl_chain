@@ -1,11 +1,7 @@
-from .pick_best_chain import (
-    PickBest,
-    PickBestAutoResponseValidator,
-    PickBestTextEmbedder,
-)
+from .pick_best_chain import PickBest, PickBestAutoSelectionScorer, PickBestTextEmbedder
 from .slates_chain import (
     SlatesPersonalizerChain,
-    SlatesAutoResponseValidator,
+    SlatesAutoSelectionScorer,
     SlatesTextEmbedder,
     SlatesRandomPolicy,
     SlatesFirstChoicePolicy,
@@ -14,7 +10,7 @@ from .rl_chain_base import (
     Embed,
     BasedOn,
     ToSelectFrom,
-    ResponseValidator,
+    SelectionScorer,
     Embedder,
     Policy,
     VwPolicy,

@@ -60,7 +60,11 @@ class SlatesTextEmbedder(base.Embedder):
     def to_vw_format(self, event: SlatesPersonalizerChain.Event) -> str:
         action_features = self.to_action_features(event.actions)
 
-        cost = event.label.cost if event.label else ""
+        cost = (
+            -1.0 * event.selected.score
+            if event.selected and event.selected.score is not None
+            else ""
+        )
         context_str = f"slates shared {cost} "
 
         if event.context:
@@ -81,8 +85,8 @@ class SlatesTextEmbedder(base.Embedder):
             ]
         )
         ps = (
-            [f"{a}:{p}" for a, p in event.label.get_actions_and_probs()]
-            if event.label
+            [f"{a}:{p}" for a, p in event.selected.get_indexes_and_probabilities()]
+            if event.selected
             else [""] * len(action_features)
         )
         slots = [f"slates slot {p} |" for p in ps]
@@ -120,7 +124,7 @@ class SlatesFirstChoicePolicy(base.Policy):
         pass
 
 
-class SlatesAutoResponseValidator(base.ResponseValidator):
+class SlatesAutoSelectionScorer(base.SelectionScorer):
     llm_chain: LLMChain
     prompt: PromptTemplate
     default_system_prompt = SystemMessagePromptTemplate.from_template(
@@ -138,16 +142,13 @@ class SlatesAutoResponseValidator(base.ResponseValidator):
             )
 
             chat_prompt = ChatPromptTemplate.from_messages(
-                [
-                    SlatesAutoResponseValidator.default_system_prompt,
-                    human_message_prompt,
-                ]
+                [SlatesAutoSelectionScorer.default_system_prompt, human_message_prompt]
             )
             self.prompt = chat_prompt
 
         self.llm_chain = LLMChain(llm=llm, prompt=self.prompt)
 
-    def grade_response(self, inputs: Dict[str, Any], llm_response: str) -> float:
+    def score_response(self, inputs: Dict[str, Any], llm_response: str) -> float:
         vars = {k: v for k, v in inputs.items() if k in self.prompt.input_variables}
         if "llm_response" in self.prompt.input_variables:
             vars["llm_response"] = llm_response
@@ -163,23 +164,23 @@ class SlatesAutoResponseValidator(base.ResponseValidator):
 
 
 class SlatesPersonalizerChain(base.RLChain):
-    class Label(base.Label):
-        chosen: Optional[List[int]]
-        chosen_probabilities: Optional[List[float]]
-        cost: Optional[float]
+    class Selected(base.Selected):
+        indexes: Optional[List[int]]
+        probabilities: Optional[List[float]]
+        score: Optional[float]
 
         def __init__(
             self,
-            chosen: Optional[List[int]] = None,
-            chosen_probabilities: Optional[List[float]] = None,
-            cost: Optional[float] = None,
+            indexes: Optional[List[int]] = None,
+            probabilities: Optional[List[float]] = None,
+            score: Optional[float] = None,
         ):
-            self.chosen = chosen
-            self.chosen_probabilities = chosen_probabilities
-            self.cost = cost
+            self.indexes = indexes
+            self.probabilities = probabilities
+            self.score = score
 
-        def get_actions_and_probs(self):
-            return zip(self.chosen, self.chosen_probabilities)
+        def get_indexes_and_probabilities(self):
+            return zip(self.indexes, self.probabilities)
 
     class Event(base.Event):
         def __init__(
@@ -187,9 +188,9 @@ class SlatesPersonalizerChain(base.RLChain):
             inputs: Dict[str, Any],
             actions: Dict[str, Any],
             context: Dict[str, Any],
-            label: Optional[SlatesPersonalizerChain.Label] = None,
+            selected: Optional[SlatesPersonalizerChain.Selected] = None,
         ):
-            super().__init__(inputs=inputs, label=label)
+            super().__init__(inputs=inputs, selected=selected)
             self.actions = actions
             self.context = context
 
@@ -229,17 +230,17 @@ class SlatesPersonalizerChain(base.RLChain):
         self,
         inputs: Dict[str, Any],
         event: SlatesPersonalizerChain.Event,
-        vwpreds: List[List[Tuple[int, float]]],
+        prediction: List[List[Tuple[int, float]]],
     ) -> Tuple[Dict[str, Any], SlatesPersonalizerChain.Event]:
-        chosen = [p[0][0] for p in vwpreds]
-        probabilities = [p[0][1] for p in vwpreds]
-        label = SlatesPersonalizerChain.Label(
-            chosen=chosen, chosen_probabilities=probabilities
+        indexes = [p[0][0] for p in prediction]
+        probabilities = [p[0][1] for p in prediction]
+        selected = SlatesPersonalizerChain.Selected(
+            indexes=indexes, probabilities=probabilities
         )
-        event.label = label
+        event.selected = selected
 
         preds = {}
-        for i, (j, a) in enumerate(zip(event.label.chosen, event.actions.values())):
+        for i, (j, a) in enumerate(zip(event.selected.indexes, event.actions.values())):
             preds[list(event.actions.keys())[i]] = str(a[j])
 
         next_chain_inputs = inputs.copy()
@@ -255,9 +256,7 @@ class SlatesPersonalizerChain(base.RLChain):
     def _call_after_scoring_before_learning(
         self, event: Event, response_quality: Optional[float]
     ) -> SlatesPersonalizerChain.Event:
-        event.label.cost = (
-            -1.0 * response_quality if response_quality is not None else None
-        )
+        event.selected.score = response_quality
         self._reward.append(response_quality)
         return event
 

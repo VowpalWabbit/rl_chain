@@ -27,6 +27,7 @@ class PickBestTextEmbedder(base.Embedder):
     Attributes:
         model name (Any, optional): The type of embeddings to be used for feature representation. Defaults to BERT SentenceTransformer.
     """
+
     def __init__(self, model: Optional[Any] = None, *args, **kwargs):
         super().__init__(*args, **kwargs)
 
@@ -38,20 +39,17 @@ class PickBestTextEmbedder(base.Embedder):
     def to_vw_format(self, event: PickBest.Event) -> str:
         """
         Converts the context and actions into a format that can be used by VW
-
-        Attributes:
-            - cb_label: (Tuple, optional) The tuple containing the chosen action, the cost of the chosen action, and the probability of the chosen action. This tuple is used to label the chosen action in the VW example string.        
-            - inputs: (Dict[str, Any]) dictionary containing:
-                - context: (Dict) The context for the VW model to use when choosing an action.
-                - actions: (List) The list of actions for the VW model to choose from.
-        
-        Returns:    
         """
 
-        if event.label:
-            chosen_action = event.label.chosen_action
-            cost = event.label.cost
-            prob = event.label.chosen_action_probability
+        cost = None
+        if event.selected:
+            chosen_action = event.selected.index
+            cost = (
+                -1.0 * event.selected.score
+                if event.selected.score is not None
+                else None
+            )
+            prob = event.selected.probability
 
         context_emb = base.embed(event.context, self.model) if event.context else None
         actions_var_name, actions = next(iter(event.actions.items()), (None, None))
@@ -72,7 +70,7 @@ class PickBestTextEmbedder(base.Embedder):
         example_string += "\n"
 
         for i, action in enumerate(action_embs):
-            if event.label and event.label.cost is not None and chosen_action == i:
+            if cost is not None and chosen_action == i:
                 example_string += f"{chosen_action}:{cost}:{prob} "
             for ns, action_embedding in action.items():
                 example_string += f"|{ns} {' '.join(action_embedding) if isinstance(action_embedding, list) else action_embedding} "
@@ -81,7 +79,7 @@ class PickBestTextEmbedder(base.Embedder):
         return example_string[:-1]
 
 
-class PickBestAutoResponseValidator(base.ResponseValidator):
+class PickBestAutoSelectionScorer(base.SelectionScorer):
     llm_chain: LLMChain
     prompt: PromptTemplate
     default_system_prompt = SystemMessagePromptTemplate.from_template(
@@ -99,13 +97,16 @@ class PickBestAutoResponseValidator(base.ResponseValidator):
             )
 
             chat_prompt = ChatPromptTemplate.from_messages(
-                [PickBestAutoResponseValidator.default_system_prompt, human_message_prompt]
+                [
+                    PickBestAutoSelectionScorer.default_system_prompt,
+                    human_message_prompt,
+                ]
             )
             self.prompt = chat_prompt
 
         self.llm_chain = LLMChain(llm=llm, prompt=self.prompt)
 
-    def grade_response(self, inputs: Dict[str, Any], llm_response: str) -> float:
+    def score_response(self, inputs: Dict[str, Any], llm_response: str) -> float:
         ranking = self.llm_chain.predict(llm_response=llm_response, **inputs)
         ranking = ranking.strip()
         try:
@@ -130,7 +131,7 @@ class PickBest(base.RLChain):
     - Chain chooses an action based on the context
     - Chain calls the LLM with the chosen action
     - LLM returns a response
-    - If the response_validator is specified, the response is checked against the response_validator
+    - If the selection_scorer is specified, the response is checked against the selection_scorer
     - The internal model will be updated with the context, action, and reward of the response (how good or bad the response was)
     - The response is returned
 
@@ -147,20 +148,20 @@ class PickBest(base.RLChain):
         text_embedder: (PickBestTextEmbedder, optional) The text embedder to use for embedding the context and the actions. If not provided, a default embedder is used.
     """
 
-    class Label(base.Label):
-        chosen_action: Optional[int]
-        chosen_action_probability: Optional[float]
-        cost: Optional[float]
+    class Selected(base.Selected):
+        index: Optional[int]
+        probability: Optional[float]
+        score: Optional[float]
 
         def __init__(
             self,
-            chosen_action: Optional[int] = None,
-            chosen_action_probability: Optional[float] = None,
-            cost: Optional[float] = None,
+            index: Optional[int] = None,
+            probability: Optional[float] = None,
+            score: Optional[float] = None,
         ):
-            self.chosen_action = chosen_action
-            self.chosen_action_probability = chosen_action_probability
-            self.cost = cost
+            self.index = index
+            self.probability = probability
+            self.score = score
 
     class Event(base.Event):
         def __init__(
@@ -168,9 +169,9 @@ class PickBest(base.RLChain):
             inputs: Dict[str, Any],
             actions: Dict[str, Any],
             context: Dict[str, Any],
-            label: Optional[PickBest.Label] = None,
+            selected: Optional[PickBest.Selected] = None,
         ):
-            super().__init__(inputs=inputs, label=label)
+            super().__init__(inputs=inputs, selected=selected)
             self.actions = actions
             self.context = context
 
@@ -178,10 +179,7 @@ class PickBest(base.RLChain):
     best_pick_context_input_key = "best_pick_context"
 
     def __init__(
-        self,
-        text_embedder: Optional[PickBestTextEmbedder] = None,
-        *args,
-        **kwargs,
+        self, text_embedder: Optional[PickBestTextEmbedder] = None, *args, **kwargs
     ):
         vw_cmd = kwargs.get("vw_cmd", [])
         if not vw_cmd:
@@ -228,7 +226,7 @@ class PickBest(base.RLChain):
 
         if not context:
             raise ValueError(
-                "No variables using 'BasedOn' found in the inputs. Please include at least one variable containing information to base the selection of ToSelectFrom on."
+                "No variables using 'BasedOn' found in the inputs. Please include at least one variable containing information to base the selected of ToSelectFrom on."
             )
 
         event = PickBest.Event(inputs=inputs, actions=actions, context=context)
@@ -244,15 +242,13 @@ class PickBest(base.RLChain):
         sampled_ap = vwpreds[sampled_index]
         sampled_action = sampled_ap[0]
         sampled_prob = sampled_ap[1]
-        label = PickBest.Label(
-            chosen_action=sampled_action, chosen_action_probability=sampled_prob
-        )
-        event.label = label
+        selected = PickBest.Selected(index=sampled_action, probability=sampled_prob)
+        event.selected = selected
 
         # only one key, value pair in event.actions
         key, value = next(iter(event.actions.items()))
         next_chain_inputs = inputs.copy()
-        next_chain_inputs.update({key: value[event.label.chosen_action]})
+        next_chain_inputs.update({key: value[event.selected.index]})
         return next_chain_inputs, event
 
     def _call_after_llm_before_scoring(
@@ -264,7 +260,7 @@ class PickBest(base.RLChain):
         next_chain_inputs.update(
             {
                 self.best_pick_context_input_key: str(event.context),
-                self.best_pick_input_key: value[event.label.chosen_action],
+                self.best_pick_input_key: value[event.selected.index],
             }
         )
         return next_chain_inputs, event
@@ -272,9 +268,7 @@ class PickBest(base.RLChain):
     def _call_after_scoring_before_learning(
         self, event: PickBest.Event, response_quality: Optional[float]
     ) -> Event:
-        event.label.cost = (
-            -1.0 * response_quality if response_quality is not None else None
-        )
+        event.selected.score = response_quality
         return event
 
     def _call(
@@ -292,8 +286,8 @@ class PickBest(base.RLChain):
         Returns:
             A dictionary containing:
                 - `response`: The response generated by the LLM (Language Model).
-                - `decision_metadata`: A Event object containing all the information needed to learn the reward for the chosen action at a later point. If an automatic response_validator is not provided, then this object can be used at a later point with the `learn_delayed_reward()` function to learn the delayed reward and update the Vowpal Wabbit model.
-                    - the `cost` in the `decision_metadata` object is set to None if an automatic response_validator is not provided or if the response_validator failed (e.g. LLM timeout or LLM failed to rank correctly).
+                - `selection_metadata`: A Event object containing all the information needed to learn the reward for the chosen action at a later point. If an automatic selection_scorer is not provided, then this object can be used at a later point with the `update_with_delayed_score()` function to learn the delayed reward and update the Vowpal Wabbit model.
+                    - the `score` in the `selection_metadata` object is set to None if an automatic selection_scorer is not provided or if the selection_scorer failed (e.g. LLM timeout or LLM failed to rank correctly).
         """
         return super()._call(run_manager=run_manager, inputs=inputs)
 
