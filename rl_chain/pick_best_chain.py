@@ -27,6 +27,7 @@ class PickBestTextEmbedder(base.Embedder):
     Attributes:
         model name (Any, optional): The type of embeddings to be used for feature representation. Defaults to BERT SentenceTransformer.
     """
+
     def __init__(self, model: Optional[Any] = None, *args, **kwargs):
         super().__init__(*args, **kwargs)
 
@@ -99,7 +100,10 @@ class PickBestAutoResponseValidator(base.ResponseValidator):
             )
 
             chat_prompt = ChatPromptTemplate.from_messages(
-                [PickBestAutoResponseValidator.default_system_prompt, human_message_prompt]
+                [
+                    PickBestAutoResponseValidator.default_system_prompt,
+                    human_message_prompt,
+                ]
             )
             self.prompt = chat_prompt
 
@@ -178,10 +182,7 @@ class PickBest(base.RLChain):
     best_pick_context_input_key = "best_pick_context"
 
     def __init__(
-        self,
-        text_embedder: Optional[PickBestTextEmbedder] = None,
-        *args,
-        **kwargs,
+        self, text_embedder: Optional[PickBestTextEmbedder] = None, *args, **kwargs
     ):
         vw_cmd = kwargs.get("vw_cmd", [])
         if not vw_cmd:
@@ -235,13 +236,13 @@ class PickBest(base.RLChain):
         return event
 
     def _call_after_predict_before_llm(
-        self, inputs: Dict[str, Any], event: Event, vwpreds: List[Tuple[int, float]]
+        self, inputs: Dict[str, Any], event: Event, prediction: List[Tuple[int, float]]
     ) -> Tuple[Dict[str, Any], PickBest.Event]:
-        prob_sum = sum(prob for _, prob in vwpreds)
-        probabilities = [prob / prob_sum for _, prob in vwpreds]
+        prob_sum = sum(prob for _, prob in prediction)
+        probabilities = [prob / prob_sum for _, prob in prediction]
         ## sample from the pmf
-        sampled_index = np.random.choice(len(vwpreds), p=probabilities)
-        sampled_ap = vwpreds[sampled_index]
+        sampled_index = np.random.choice(len(prediction), p=probabilities)
+        sampled_ap = prediction[sampled_index]
         sampled_action = sampled_ap[0]
         sampled_prob = sampled_ap[1]
         label = PickBest.Label(

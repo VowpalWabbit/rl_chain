@@ -20,6 +20,30 @@ def test_simple_context_str_w_emb():
     encoded_str1 = " ".join(char for char in str1)
     expected = [{"a_namespace": encoded_text + encoded_str1}]
     assert base.embed(base.Embed(str1), MockEncoder(), "a_namespace") == expected
+    expected_embed_and_keep = [
+        {"a_namespace": str1 + " " + encoded_text + encoded_str1}
+    ]
+    assert (
+        base.embed(base.EmbedAndKeep(str1), MockEncoder(), "a_namespace")
+        == expected_embed_and_keep
+    )
+
+
+def test_simple_context_str_w_nested_emb():
+    # nested embeddings, innermost wins
+    str1 = "test"
+    encoded_str1 = " ".join(char for char in str1)
+    expected = [{"a_namespace": encoded_text + encoded_str1}]
+    assert (
+        base.embed(base.EmbedAndKeep(base.Embed(str1)), MockEncoder(), "a_namespace")
+        == expected
+    )
+
+    expected2 = [{"a_namespace": str1 + " " + encoded_text + encoded_str1}]
+    assert (
+        base.embed(base.Embed(base.EmbedAndKeep(str1)), MockEncoder(), "a_namespace")
+        == expected2
+    )
 
 
 def test_context_w_namespace_no_emb():
@@ -32,6 +56,13 @@ def test_context_w_namespace_w_emb():
     encoded_str1 = " ".join(char for char in str1)
     expected = [{"test_namespace": encoded_text + encoded_str1}]
     assert base.embed({"test_namespace": base.Embed(str1)}, MockEncoder()) == expected
+    expected_embed_and_keep = [
+        {"test_namespace": str1 + " " + encoded_text + encoded_str1}
+    ]
+    assert (
+        base.embed({"test_namespace": base.EmbedAndKeep(str1)}, MockEncoder())
+        == expected_embed_and_keep
+    )
 
 
 def test_context_w_namespace_w_emb2():
@@ -39,6 +70,13 @@ def test_context_w_namespace_w_emb2():
     encoded_str1 = " ".join(char for char in str1)
     expected = [{"test_namespace": encoded_text + encoded_str1}]
     assert base.embed(base.Embed({"test_namespace": str1}), MockEncoder()) == expected
+    expected_embed_and_keep = [
+        {"test_namespace": str1 + " " + encoded_text + encoded_str1}
+    ]
+    assert (
+        base.embed(base.EmbedAndKeep({"test_namespace": str1}), MockEncoder())
+        == expected_embed_and_keep
+    )
 
 
 def test_context_w_namespace_w_some_emb():
@@ -53,6 +91,19 @@ def test_context_w_namespace_w_some_emb():
             {"test_namespace": str1, "test_namespace2": base.Embed(str2)}, MockEncoder()
         )
         == expected
+    )
+    expected_embed_and_keep = [
+        {
+            "test_namespace": str1,
+            "test_namespace2": str2 + " " + encoded_text + encoded_str2,
+        }
+    ]
+    assert (
+        base.embed(
+            {"test_namespace": str1, "test_namespace2": base.EmbedAndKeep(str2)},
+            MockEncoder(),
+        )
+        == expected_embed_and_keep
     )
 
 
@@ -80,6 +131,15 @@ def test_simple_action_strlist_w_emb():
         base.embed(base.Embed([str1, str2, str3]), MockEncoder(), "a_namespace")
         == expected
     )
+    expected_embed_and_keep = [
+        {"a_namespace": str1 + " " + encoded_text + encoded_str1},
+        {"a_namespace": str2 + " " + encoded_text + encoded_str2},
+        {"a_namespace": str3 + " " + encoded_text + encoded_str3},
+    ]
+    assert (
+        base.embed(base.EmbedAndKeep([str1, str2, str3]), MockEncoder(), "a_namespace")
+        == expected_embed_and_keep
+    )
 
 
 def test_simple_action_strlist_w_some_emb():
@@ -98,6 +158,19 @@ def test_simple_action_strlist_w_some_emb():
             [str1, base.Embed(str2), base.Embed(str3)], MockEncoder(), "a_namespace"
         )
         == expected
+    )
+    expected_embed_and_keep = [
+        {"a_namespace": str1},
+        {"a_namespace": str2 + " " + encoded_text + encoded_str2},
+        {"a_namespace": str3 + " " + encoded_text + encoded_str3},
+    ]
+    assert (
+        base.embed(
+            [str1, base.EmbedAndKeep(str2), base.EmbedAndKeep(str3)],
+            MockEncoder(),
+            "a_namespace",
+        )
+        == expected_embed_and_keep
     )
 
 
@@ -146,6 +219,22 @@ def test_action_w_namespace_w_emb():
         )
         == expected
     )
+    expected_embed_and_keep = [
+        {"test_namespace": str1 + " " + encoded_text + encoded_str1},
+        {"test_namespace": str2 + " " + encoded_text + encoded_str2},
+        {"test_namespace": str3 + " " + encoded_text + encoded_str3},
+    ]
+    assert (
+        base.embed(
+            [
+                {"test_namespace": base.EmbedAndKeep(str1)},
+                {"test_namespace": base.EmbedAndKeep(str2)},
+                {"test_namespace": base.EmbedAndKeep(str3)},
+            ],
+            MockEncoder(),
+        )
+        == expected_embed_and_keep
+    )
 
 
 def test_action_w_namespace_w_emb2():
@@ -173,6 +262,24 @@ def test_action_w_namespace_w_emb2():
         )
         == expected
     )
+    expected_embed_and_keep = [
+        {"test_namespace1": str1 + " " + encoded_text + encoded_str1},
+        {"test_namespace2": str2 + " " + encoded_text + encoded_str2},
+        {"test_namespace3": str3 + " " + encoded_text + encoded_str3},
+    ]
+    assert (
+        base.embed(
+            base.EmbedAndKeep(
+                [
+                    {"test_namespace1": str1},
+                    {"test_namespace2": str2},
+                    {"test_namespace3": str3},
+                ]
+            ),
+            MockEncoder(),
+        )
+        == expected_embed_and_keep
+    )
 
 
 def test_action_w_namespace_w_some_emb():
@@ -196,6 +303,22 @@ def test_action_w_namespace_w_some_emb():
             MockEncoder(),
         )
         == expected
+    )
+    expected_embed_and_keep = [
+        {"test_namespace": str1},
+        {"test_namespace": str2 + " " + encoded_text + encoded_str2},
+        {"test_namespace": str3 + " " + encoded_text + encoded_str3},
+    ]
+    assert (
+        base.embed(
+            [
+                {"test_namespace": str1},
+                {"test_namespace": base.EmbedAndKeep(str2)},
+                {"test_namespace": base.EmbedAndKeep(str3)},
+            ],
+            MockEncoder(),
+        )
+        == expected_embed_and_keep
     )
 
 
@@ -221,6 +344,31 @@ def test_action_w_namespace_w_emb_w_more_than_one_item_in_first_dict():
             MockEncoder(),
         )
         == expected
+    )
+    expected_embed_and_keep = [
+        {
+            "test_namespace": str1 + " " + encoded_text + encoded_str1,
+            "test_namespace2": str1,
+        },
+        {
+            "test_namespace": str2 + " " + encoded_text + encoded_str2,
+            "test_namespace2": str2,
+        },
+        {
+            "test_namespace": str3 + " " + encoded_text + encoded_str3,
+            "test_namespace2": str3,
+        },
+    ]
+    assert (
+        base.embed(
+            [
+                {"test_namespace": base.EmbedAndKeep(str1), "test_namespace2": str1},
+                {"test_namespace": base.EmbedAndKeep(str2), "test_namespace2": str2},
+                {"test_namespace": base.EmbedAndKeep(str3), "test_namespace2": str3},
+            ],
+            MockEncoder(),
+        )
+        == expected_embed_and_keep
     )
 
 
