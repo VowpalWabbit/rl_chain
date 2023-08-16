@@ -1,8 +1,12 @@
-from .pick_best_chain import PickBest, PickBestAutoSelectionScorer, PickBestTextEmbedder
+from .pick_best_chain import (
+    PickBest,
+    PickBestAutoSelectionScorer,
+    PickBestFeatureEmbedder,
+)
 from .slates_chain import (
     SlatesPersonalizerChain,
     SlatesAutoSelectionScorer,
-    SlatesTextEmbedder,
+    SlatesFeatureEmbedder,
     SlatesRandomPolicy,
     SlatesFirstChoicePolicy,
 )

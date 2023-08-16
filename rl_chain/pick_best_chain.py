@@ -20,7 +20,7 @@ from langchain.chains.llm import LLMChain
 from sentence_transformers import SentenceTransformer
 
 
-class PickBestTextEmbedder(base.Embedder):
+class PickBestFeatureEmbedder(base.Embedder):
     """
     Contextual Bandit Text Embedder class that embeds the based_on and to_select_from into a format that can be used by VW
     
@@ -36,7 +36,7 @@ class PickBestTextEmbedder(base.Embedder):
 
         self.model = model
 
-    def to_vw_format(self, event: PickBest.Event) -> str:
+    def feature_format(self, event: PickBest.Event) -> str:
         """
         Converts the based_on and to_select_from into a format that can be used by VW
         """
@@ -149,7 +149,7 @@ class PickBest(base.RLChain):
         RLChain
 
     Attributes:
-        text_embedder: (PickBestTextEmbedder, optional) The text embedder to use for embedding the based_on and the to_select_from. If not provided, a default embedder is used.
+        feature_embedder: (PickBestFeatureEmbedder, optional) The text embedder to use for embedding the based_on and the to_select_from. If not provided, a default embedder is used.
     """
 
     class Selected(base.Selected):
@@ -183,7 +183,10 @@ class PickBest(base.RLChain):
     best_pick_context_input_key = "best_pick_context"
 
     def __init__(
-        self, text_embedder: Optional[PickBestTextEmbedder] = None, *args, **kwargs
+        self,
+        feature_embedder: Optional[PickBestFeatureEmbedder] = None,
+        *args,
+        **kwargs,
     ):
         vw_cmd = kwargs.get("vw_cmd", [])
         if not vw_cmd:
@@ -201,10 +204,10 @@ class PickBest(base.RLChain):
                 )
 
         kwargs["vw_cmd"] = vw_cmd
-        if not text_embedder:
-            text_embedder = PickBestTextEmbedder()
+        if not feature_embedder:
+            feature_embedder = PickBestFeatureEmbedder()
 
-        super().__init__(text_embedder=text_embedder, *args, **kwargs)
+        super().__init__(feature_embedder=feature_embedder, *args, **kwargs)
 
     def _validate_inputs(self, inputs: Dict[str, Any]) -> None:
         super()._validate_inputs(inputs)

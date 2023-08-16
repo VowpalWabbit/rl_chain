@@ -25,7 +25,7 @@ from langchain.chains.llm import LLMChain
 from sentence_transformers import SentenceTransformer
 
 
-class SlatesTextEmbedder(base.Embedder):
+class SlatesFeatureEmbedder(base.Embedder):
     """
     Slates Text Embedder class that embeds the context and actions and slates into a format that can be used by VW
     
@@ -57,7 +57,7 @@ class SlatesTextEmbedder(base.Embedder):
 
         return action_features
 
-    def to_vw_format(self, event: SlatesPersonalizerChain.Event) -> str:
+    def feature_format(self, event: SlatesPersonalizerChain.Event) -> str:
         action_features = self.to_action_features(event.to_select_from)
 
         cost = (
@@ -94,8 +94,8 @@ class SlatesTextEmbedder(base.Embedder):
 
 
 class SlatesRandomPolicy(base.Policy):
-    def __init__(self, text_embedder: base.Embedder, *_, **__):
-        self.text_embedder = text_embedder
+    def __init__(self, feature_embedder: base.Embedder, *_, **__):
+        self.feature_embedder = feature_embedder
 
     def predict(self, event: SlatesPersonalizerChain.Event) -> Any:
         return [
@@ -111,8 +111,8 @@ class SlatesRandomPolicy(base.Policy):
 
 
 class SlatesFirstChoicePolicy(base.Policy):
-    def __init__(self, text_embedder: base.Embedder, *_, **__):
-        self.text_embedder = text_embedder
+    def __init__(self, feature_embedder: base.Embedder, *_, **__):
+        self.feature_embedder = feature_embedder
 
     def predict(self, event: SlatesPersonalizerChain.Event) -> Any:
         return [[(0, 1)] for _ in event.to_select_from]
@@ -196,7 +196,9 @@ class SlatesPersonalizerChain(base.RLChain):
 
     _reward: List[float] = PrivateAttr(default=[])
 
-    def __init__(self, text_embedder: Optional[base.Embedder] = None, *args, **kwargs):
+    def __init__(
+        self, feature_embedder: Optional[base.Embedder] = None, *args, **kwargs
+    ):
         vw_cmd = kwargs.get("vw_cmd", [])
         if not vw_cmd:
             vw_cmd = [
@@ -212,10 +214,10 @@ class SlatesPersonalizerChain(base.RLChain):
 
         kwargs["vw_cmd"] = vw_cmd
 
-        if text_embedder is None:
-            text_embedder = SlatesTextEmbedder()
+        if feature_embedder is None:
+            feature_embedder = SlatesFeatureEmbedder()
 
-        super().__init__(text_embedder=text_embedder, *args, **kwargs)
+        super().__init__(feature_embedder=feature_embedder, *args, **kwargs)
 
     def _call_before_predict(
         self, inputs: Dict[str, Any]

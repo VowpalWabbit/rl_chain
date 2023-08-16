@@ -139,23 +139,23 @@ class VwPolicy(Policy):
     def __init__(
         self,
         workspace: vw.Workspace,
-        text_embedder: Embedder,
+        feature_embedder: Embedder,
         logger: VwLogger,
         *_,
         **__,
     ):
         self.workspace = workspace
-        self.text_embedder = text_embedder
+        self.feature_embedder = feature_embedder
         self.logger = logger
 
     def predict(self, event: Event) -> Any:
         text_parser = vw.TextFormatParser(self.workspace)
         return self.workspace.predict_one(
-            parse_lines(text_parser, self.text_embedder.to_vw_format(event))
+            parse_lines(text_parser, self.feature_embedder.feature_format(event))
         )
 
     def learn(self, event: Event):
-        vw_ex = self.text_embedder.to_vw_format(event)
+        vw_ex = self.feature_embedder.feature_format(event)
 
         text_parser = vw.TextFormatParser(self.workspace)
         multi_ex = parse_lines(text_parser, vw_ex)
@@ -163,13 +163,13 @@ class VwPolicy(Policy):
 
     def log(self, event: Event):
         if self.logger.logging_enabled():
-            vw_ex = self.text_embedder.to_vw_format(event)
+            vw_ex = self.feature_embedder.feature_format(event)
             self.logger.log(vw_ex)
 
 
 class Embedder(ABC):
     @abstractmethod
-    def to_vw_format(self, vw_event: Event) -> str:
+    def feature_format(self, vw_event: Event) -> str:
         pass
 
 
@@ -208,7 +208,7 @@ class RLChain(Chain):
 
     def __init__(
         self,
-        text_embedder: Embedder,
+        feature_embedder: Embedder,
         model_loading=True,
         vw_cmd=[],
         policy=VwPolicy,
@@ -257,7 +257,9 @@ class RLChain(Chain):
             workspace = vw.Workspace(vw_cmd)
 
         self.policy = policy(
-            workspace=workspace, text_embedder=text_embedder, logger=VwLogger(vw_logs)
+            workspace=workspace,
+            feature_embedder=feature_embedder,
+            logger=VwLogger(vw_logs),
         )
 
     class Config:
