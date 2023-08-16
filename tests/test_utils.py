@@ -2,7 +2,7 @@ from rl_chain import SelectionScorer
 from typing import Dict, Any
 
 
-class MockValidator(SelectionScorer):
+class MockScorer(SelectionScorer):
     def __init__(self):
         ...
 
