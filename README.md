@@ -12,7 +12,7 @@ TLDR:
 - You can change the arguments at chain creation time
 - There is a default prompt but it can be changed
 - There is a default reward function that gets triggered and triggers learn automatically
-  - This can be turned off and cost can be spcified explicitly
+  - This can be turned off and score can be spcified explicitly
 
 Flow:
 
@@ -22,4 +22,4 @@ Flow:
 - Chain: calls VW with the context and selects an action
 - Chain: action (and other vars) are passed to the LLM with the prompt
 - Chain: if default reward set, the LLM is called to judge and give a reward score of the response based on the context
-- Chain: VW learn is triggered with that cost (-1.0 * reward_from_llm)
+- Chain: VW learn is triggered with that score

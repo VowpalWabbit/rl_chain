@@ -50,16 +50,14 @@ def test_ToSelectFrom_not_a_list_throws():
         )
 
 
-def test_learn_delayed_reward_with_auto_validator_throws():
+def test_update_with_delayed_score_with_auto_validator_throws():
     llm, PROMPT = setup()
     # this LLM returns a number so that the auto validator will return that
     auto_val_llm = FakeListChatModel(responses=["3"])
     chain = pick_best_chain.PickBest.from_llm(
         llm=llm,
         prompt=PROMPT,
-        response_validator=pick_best_chain.PickBestAutoResponseValidator(
-            llm=auto_val_llm
-        ),
+        selection_scorer=pick_best_chain.PickBestAutoSelectionScorer(llm=auto_val_llm),
     )
     actions = ["0", "1", "2"]
     response = chain.run(
@@ -67,22 +65,20 @@ def test_learn_delayed_reward_with_auto_validator_throws():
         action=pick_best_chain.base.ToSelectFrom(actions),
     )
     assert response["response"] == "hey"
-    decision_metadata = response["decision_metadata"]
-    assert decision_metadata.label.cost == -3.0
+    selection_metadata = response["selection_metadata"]
+    assert selection_metadata.selected.score == 3.0
     with pytest.raises(RuntimeError):
-        chain.learn_delayed_reward(event=decision_metadata, reward=100)
+        chain.update_with_delayed_score(event=selection_metadata, score=100)
 
 
-def test_learn_delayed_reward_force():
+def test_update_with_delayed_score_force():
     llm, PROMPT = setup()
     # this LLM returns a number so that the auto validator will return that
     auto_val_llm = FakeListChatModel(responses=["3"])
     chain = pick_best_chain.PickBest.from_llm(
         llm=llm,
         prompt=PROMPT,
-        response_validator=pick_best_chain.PickBestAutoResponseValidator(
-            llm=auto_val_llm
-        ),
+        selection_scorer=pick_best_chain.PickBestAutoSelectionScorer(llm=auto_val_llm),
     )
     actions = ["0", "1", "2"]
     response = chain.run(
@@ -90,13 +86,15 @@ def test_learn_delayed_reward_force():
         action=pick_best_chain.base.ToSelectFrom(actions),
     )
     assert response["response"] == "hey"
-    decision_metadata = response["decision_metadata"]
-    assert decision_metadata.label.cost == -3.0
-    chain.learn_delayed_reward(event=decision_metadata, reward=100, force_reward=True)
-    assert decision_metadata.label.cost == -100.0
+    selection_metadata = response["selection_metadata"]
+    assert selection_metadata.selected.score == 3.0
+    chain.update_with_delayed_score(
+        event=selection_metadata, score=100, force_score=True
+    )
+    assert selection_metadata.selected.score == 100.0
 
 
-def test_learn_delayed_reward():
+def test_update_with_delayed_score():
     llm, PROMPT = setup()
     chain = pick_best_chain.PickBest.from_llm(llm=llm, prompt=PROMPT)
     actions = ["0", "1", "2"]
@@ -105,22 +103,22 @@ def test_learn_delayed_reward():
         action=pick_best_chain.base.ToSelectFrom(actions),
     )
     assert response["response"] == "hey"
-    decision_metadata = response["decision_metadata"]
-    assert decision_metadata.label.cost == None
-    chain.learn_delayed_reward(event=decision_metadata, reward=100)
-    assert decision_metadata.label.cost == -100.0
+    selection_metadata = response["selection_metadata"]
+    assert selection_metadata.selected.score == None
+    chain.update_with_delayed_score(event=selection_metadata, score=100)
+    assert selection_metadata.selected.score == 100.0
 
 
-def test_user_defined_reward():
+def test_user_defined_scorer():
     llm, PROMPT = setup()
 
-    class CustomResponseValidator(pick_best_chain.base.ResponseValidator):
-        def grade_response(self, inputs, llm_response: str) -> float:
-            reward = 200
-            return reward
+    class CustomSelectionScorer(pick_best_chain.base.SelectionScorer):
+        def score_response(self, inputs, llm_response: str) -> float:
+            score = 200
+            return score
 
     chain = pick_best_chain.PickBest.from_llm(
-        llm=llm, prompt=PROMPT, response_validator=CustomResponseValidator()
+        llm=llm, prompt=PROMPT, selection_scorer=CustomSelectionScorer()
     )
     actions = ["0", "1", "2"]
     response = chain.run(
@@ -128,8 +126,8 @@ def test_user_defined_reward():
         action=pick_best_chain.base.ToSelectFrom(actions),
     )
     assert response["response"] == "hey"
-    decision_metadata = response["decision_metadata"]
-    assert decision_metadata.label.cost == -200.0
+    selection_metadata = response["selection_metadata"]
+    assert selection_metadata.selected.score == 200.0
 
 
 def test_default_embeddings():
@@ -160,8 +158,8 @@ def test_default_embeddings():
         User=pick_best_chain.base.BasedOn(ctx_str_1),
         action=pick_best_chain.base.ToSelectFrom(actions),
     )
-    decision_metadata = response["decision_metadata"]
-    vw_str = text_embedder.to_vw_format(decision_metadata)
+    selection_metadata = response["selection_metadata"]
+    vw_str = text_embedder.to_vw_format(selection_metadata)
     assert vw_str == expected
 
 
@@ -185,8 +183,8 @@ def test_default_embeddings_off():
         User=pick_best_chain.base.BasedOn(ctx_str_1),
         action=pick_best_chain.base.ToSelectFrom(actions),
     )
-    decision_metadata = response["decision_metadata"]
-    vw_str = text_embedder.to_vw_format(decision_metadata)
+    selection_metadata = response["selection_metadata"]
+    vw_str = text_embedder.to_vw_format(selection_metadata)
     assert vw_str == expected
 
 
@@ -219,6 +217,6 @@ def test_default_embeddings_mixed_w_explicit_user_embeddings():
         User2=pick_best_chain.base.BasedOn(ctx_str_2),
         action=pick_best_chain.base.ToSelectFrom(actions),
     )
-    decision_metadata = response["decision_metadata"]
-    vw_str = text_embedder.to_vw_format(decision_metadata)
+    selection_metadata = response["selection_metadata"]
+    vw_str = text_embedder.to_vw_format(selection_metadata)
     assert vw_str == expected

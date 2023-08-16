@@ -11,65 +11,69 @@ encoded_text = "[ e n c o d e d ] "
 
 
 def test_pickbest_textembedder_missing_context_throws():
-    text_embedder = pick_best_chain.PickBestTextEmbedder(model=MockEncoder())
+    feature_embedder = pick_best_chain.PickBestFeatureEmbedder(model=MockEncoder())
     named_action = {"action": ["0", "1", "2"]}
-    event = pick_best_chain.PickBest.Event(inputs={}, actions=named_action, context={})
+    event = pick_best_chain.PickBest.Event(
+        inputs={}, to_select_from=named_action, based_on={}
+    )
     with pytest.raises(ValueError):
-        text_embedder.to_vw_format(event)
+        feature_embedder.format(event)
 
 
 def test_pickbest_textembedder_missing_actions_throws():
-    text_embedder = pick_best_chain.PickBestTextEmbedder(model=MockEncoder())
+    feature_embedder = pick_best_chain.PickBestFeatureEmbedder(model=MockEncoder())
     event = pick_best_chain.PickBest.Event(
-        inputs={}, actions={}, context={"context": "context"}
+        inputs={}, to_select_from={}, based_on={"context": "context"}
     )
     with pytest.raises(ValueError):
-        text_embedder.to_vw_format(event)
+        feature_embedder.format(event)
 
 
 def test_pickbest_textembedder_no_label_no_emb():
-    text_embedder = pick_best_chain.PickBestTextEmbedder(model=MockEncoder())
+    feature_embedder = pick_best_chain.PickBestFeatureEmbedder(model=MockEncoder())
     named_actions = {"action1": ["0", "1", "2"]}
     expected = """shared |context context \n|action1 0 \n|action1 1 \n|action1 2 """
     event = pick_best_chain.PickBest.Event(
-        inputs={}, actions=named_actions, context={"context": "context"}
+        inputs={}, to_select_from=named_actions, based_on={"context": "context"}
     )
-    vw_ex_str = text_embedder.to_vw_format(event)
+    vw_ex_str = feature_embedder.format(event)
     assert vw_ex_str == expected
 
 
-def test_pickbest_textembedder_w_label_no_cost_no_emb():
-    text_embedder = pick_best_chain.PickBestTextEmbedder(model=MockEncoder())
+def test_pickbest_textembedder_w_label_no_score_no_emb():
+    feature_embedder = pick_best_chain.PickBestFeatureEmbedder(model=MockEncoder())
     named_actions = {"action1": ["0", "1", "2"]}
     expected = """shared |context context \n|action1 0 \n|action1 1 \n|action1 2 """
-    label = pick_best_chain.PickBest.Label(
-        chosen_action=0, chosen_action_probability=1.0
-    )
+    selected = pick_best_chain.PickBest.Selected(index=0, probability=1.0)
     event = pick_best_chain.PickBest.Event(
-        inputs={}, actions=named_actions, context={"context": "context"}, label=label
+        inputs={},
+        to_select_from=named_actions,
+        based_on={"context": "context"},
+        selected=selected,
     )
-    vw_ex_str = text_embedder.to_vw_format(event)
+    vw_ex_str = feature_embedder.format(event)
     assert vw_ex_str == expected
 
 
 def test_pickbest_textembedder_w_full_label_no_emb():
-    text_embedder = pick_best_chain.PickBestTextEmbedder(model=MockEncoder())
+    feature_embedder = pick_best_chain.PickBestFeatureEmbedder(model=MockEncoder())
     named_actions = {"action1": ["0", "1", "2"]}
     expected = (
-        """shared |context context \n0:0.0:1.0 |action1 0 \n|action1 1 \n|action1 2 """
+        """shared |context context \n0:-0.0:1.0 |action1 0 \n|action1 1 \n|action1 2 """
     )
-    label = pick_best_chain.PickBest.Label(
-        chosen_action=0, chosen_action_probability=1.0, cost=0.0
-    )
+    selected = pick_best_chain.PickBest.Selected(index=0, probability=1.0, score=0.0)
     event = pick_best_chain.PickBest.Event(
-        inputs={}, actions=named_actions, context={"context": "context"}, label=label
+        inputs={},
+        to_select_from=named_actions,
+        based_on={"context": "context"},
+        selected=selected,
     )
-    vw_ex_str = text_embedder.to_vw_format(event)
+    vw_ex_str = feature_embedder.format(event)
     assert vw_ex_str == expected
 
 
 def test_pickbest_textembedder_w_full_label_w_emb():
-    text_embedder = pick_best_chain.PickBestTextEmbedder(model=MockEncoder())
+    feature_embedder = pick_best_chain.PickBestFeatureEmbedder(model=MockEncoder())
     str1 = "0"
     str2 = "1"
     str3 = "2"
@@ -82,14 +86,12 @@ def test_pickbest_textembedder_w_full_label_w_emb():
 
     named_actions = {"action1": pick_best_chain.base.Embed([str1, str2, str3])}
     context = {"context": pick_best_chain.base.Embed(ctx_str_1)}
-    expected = f"""shared |context {encoded_ctx_str_1} \n0:0.0:1.0 |action1 {encoded_str1} \n|action1 {encoded_str2} \n|action1 {encoded_str3} """
-    label = pick_best_chain.PickBest.Label(
-        chosen_action=0, chosen_action_probability=1.0, cost=0.0
-    )
+    expected = f"""shared |context {encoded_ctx_str_1} \n0:-0.0:1.0 |action1 {encoded_str1} \n|action1 {encoded_str2} \n|action1 {encoded_str3} """
+    selected = pick_best_chain.PickBest.Selected(index=0, probability=1.0, score=0.0)
     event = pick_best_chain.PickBest.Event(
-        inputs={}, actions=named_actions, context=context, label=label
+        inputs={}, to_select_from=named_actions, based_on=context, selected=selected
     )
-    vw_ex_str = text_embedder.to_vw_format(event)
+    vw_ex_str = feature_embedder.format(event)
     assert vw_ex_str == expected
 
 
@@ -119,49 +121,45 @@ def test_pickbest_textembedder_w_full_label_w_embed_and_keep():
 
 
 def test_pickbest_textembedder_more_namespaces_no_label_no_emb():
-    text_embedder = pick_best_chain.PickBestTextEmbedder(model=MockEncoder())
+    feature_embedder = pick_best_chain.PickBestFeatureEmbedder(model=MockEncoder())
     named_actions = {"action1": [{"a": "0", "b": "0"}, "1", "2"]}
     context = {"context1": "context1", "context2": "context2"}
     expected = """shared |context1 context1 |context2 context2 \n|a 0 |b 0 \n|action1 1 \n|action1 2 """
     event = pick_best_chain.PickBest.Event(
-        inputs={}, actions=named_actions, context=context
+        inputs={}, to_select_from=named_actions, based_on=context
     )
-    vw_ex_str = text_embedder.to_vw_format(event)
+    vw_ex_str = feature_embedder.format(event)
     assert vw_ex_str == expected
 
 
 def test_pickbest_textembedder_more_namespaces_w_label_no_emb():
-    text_embedder = pick_best_chain.PickBestTextEmbedder(model=MockEncoder())
+    feature_embedder = pick_best_chain.PickBestFeatureEmbedder(model=MockEncoder())
     named_actions = {"action1": [{"a": "0", "b": "0"}, "1", "2"]}
     context = {"context1": "context1", "context2": "context2"}
     expected = """shared |context1 context1 |context2 context2 \n|a 0 |b 0 \n|action1 1 \n|action1 2 """
-    label = pick_best_chain.PickBest.Label(
-        chosen_action=0, chosen_action_probability=1.0
-    )
+    selected = pick_best_chain.PickBest.Selected(index=0, probability=1.0)
     event = pick_best_chain.PickBest.Event(
-        inputs={}, actions=named_actions, context=context, label=label
+        inputs={}, to_select_from=named_actions, based_on=context, selected=selected
     )
-    vw_ex_str = text_embedder.to_vw_format(event)
+    vw_ex_str = feature_embedder.format(event)
     assert vw_ex_str == expected
 
 
 def test_pickbest_textembedder_more_namespaces_w_full_label_no_emb():
-    text_embedder = pick_best_chain.PickBestTextEmbedder(model=MockEncoder())
+    feature_embedder = pick_best_chain.PickBestFeatureEmbedder(model=MockEncoder())
     named_actions = {"action1": [{"a": "0", "b": "0"}, "1", "2"]}
     context = {"context1": "context1", "context2": "context2"}
-    expected = """shared |context1 context1 |context2 context2 \n0:0.0:1.0 |a 0 |b 0 \n|action1 1 \n|action1 2 """
-    label = pick_best_chain.PickBest.Label(
-        chosen_action=0, chosen_action_probability=1.0, cost=0.0
-    )
+    expected = """shared |context1 context1 |context2 context2 \n0:-0.0:1.0 |a 0 |b 0 \n|action1 1 \n|action1 2 """
+    selected = pick_best_chain.PickBest.Selected(index=0, probability=1.0, score=0.0)
     event = pick_best_chain.PickBest.Event(
-        inputs={}, actions=named_actions, context=context, label=label
+        inputs={}, to_select_from=named_actions, based_on=context, selected=selected
     )
-    vw_ex_str = text_embedder.to_vw_format(event)
+    vw_ex_str = feature_embedder.format(event)
     assert vw_ex_str == expected
 
 
 def test_pickbest_textembedder_more_namespaces_w_full_label_w_full_emb():
-    text_embedder = pick_best_chain.PickBestTextEmbedder(model=MockEncoder())
+    feature_embedder = pick_best_chain.PickBestFeatureEmbedder(model=MockEncoder())
 
     str1 = "0"
     str2 = "1"
@@ -182,15 +180,13 @@ def test_pickbest_textembedder_more_namespaces_w_full_label_w_full_emb():
         "context1": pick_best_chain.base.Embed(ctx_str_1),
         "context2": pick_best_chain.base.Embed(ctx_str_2),
     }
-    expected = f"""shared |context1 {encoded_ctx_str_1} |context2 {encoded_ctx_str_2} \n0:0.0:1.0 |a {encoded_str1} |b {encoded_str1} \n|action1 {encoded_str2} \n|action1 {encoded_str3} """
+    expected = f"""shared |context1 {encoded_ctx_str_1} |context2 {encoded_ctx_str_2} \n0:-0.0:1.0 |a {encoded_str1} |b {encoded_str1} \n|action1 {encoded_str2} \n|action1 {encoded_str3} """
 
-    label = pick_best_chain.PickBest.Label(
-        chosen_action=0, chosen_action_probability=1.0, cost=0.0
-    )
+    selected = pick_best_chain.PickBest.Selected(index=0, probability=1.0, score=0.0)
     event = pick_best_chain.PickBest.Event(
-        inputs={}, actions=named_actions, context=context, label=label
+        inputs={}, to_select_from=named_actions, based_on=context, selected=selected
     )
-    vw_ex_str = text_embedder.to_vw_format(event)
+    vw_ex_str = feature_embedder.format(event)
     assert vw_ex_str == expected
 
 
@@ -231,7 +227,7 @@ def test_pickbest_textembedder_more_namespaces_w_full_label_w_full_embed_and_kee
 
 
 def test_pickbest_textembedder_more_namespaces_w_full_label_w_partial_emb():
-    text_embedder = pick_best_chain.PickBestTextEmbedder(model=MockEncoder())
+    feature_embedder = pick_best_chain.PickBestFeatureEmbedder(model=MockEncoder())
 
     str1 = "0"
     str2 = "1"
@@ -253,15 +249,13 @@ def test_pickbest_textembedder_more_namespaces_w_full_label_w_partial_emb():
         ]
     }
     context = {"context1": ctx_str_1, "context2": pick_best_chain.base.Embed(ctx_str_2)}
-    expected = f"""shared |context1 {ctx_str_1} |context2 {encoded_ctx_str_2} \n0:0.0:1.0 |a {str1} |b {encoded_str1} \n|action1 {str2} \n|action1 {encoded_str3} """
+    expected = f"""shared |context1 {ctx_str_1} |context2 {encoded_ctx_str_2} \n0:-0.0:1.0 |a {str1} |b {encoded_str1} \n|action1 {str2} \n|action1 {encoded_str3} """
 
-    label = pick_best_chain.PickBest.Label(
-        chosen_action=0, chosen_action_probability=1.0, cost=0.0
-    )
+    selected = pick_best_chain.PickBest.Selected(index=0, probability=1.0, score=0.0)
     event = pick_best_chain.PickBest.Event(
-        inputs={}, actions=named_actions, context=context, label=label
+        inputs={}, to_select_from=named_actions, based_on=context, selected=selected
     )
-    vw_ex_str = text_embedder.to_vw_format(event)
+    vw_ex_str = feature_embedder.format(event)
     assert vw_ex_str == expected
 
 
