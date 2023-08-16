@@ -22,7 +22,7 @@ from sentence_transformers import SentenceTransformer
 
 class PickBestTextEmbedder(base.Embedder):
     """
-    Contextual Bandit Text Embedder class that embeds the context and actions into a format that can be used by VW
+    Contextual Bandit Text Embedder class that embeds the based_on and to_select_from into a format that can be used by VW
     
     Attributes:
         model name (Any, optional): The type of embeddings to be used for feature representation. Defaults to BERT SentenceTransformer.
@@ -38,7 +38,7 @@ class PickBestTextEmbedder(base.Embedder):
 
     def to_vw_format(self, event: PickBest.Event) -> str:
         """
-        Converts the context and actions into a format that can be used by VW
+        Converts the based_on and to_select_from into a format that can be used by VW
         """
 
         cost = None
@@ -51,22 +51,26 @@ class PickBestTextEmbedder(base.Embedder):
             )
             prob = event.selected.probability
 
-        context_emb = base.embed(event.context, self.model) if event.context else None
-        actions_var_name, actions = next(iter(event.actions.items()), (None, None))
+        context_emb = base.embed(event.based_on, self.model) if event.based_on else None
+        to_select_from_var_name, to_select_from = next(
+            iter(event.to_select_from.items()), (None, None)
+        )
         action_embs = (
-            base.embed(actions, self.model, actions_var_name) if event.actions else None
+            base.embed(to_select_from, self.model, to_select_from_var_name)
+            if event.to_select_from
+            else None
         )
 
         if not context_emb or not action_embs:
             raise ValueError(
-                "Context and actions must be provided in the inputs dictionary"
+                "Context and to_select_from must be provided in the inputs dictionary"
             )
 
         example_string = ""
         example_string += f"shared "
         for context_item in context_emb:
-            for ns, context in context_item.items():
-                example_string += f"|{ns} {' '.join(context) if isinstance(context, list) else context} "
+            for ns, based_on in context_item.items():
+                example_string += f"|{ns} {' '.join(based_on) if isinstance(based_on, list) else based_on} "
         example_string += "\n"
 
         for i, action in enumerate(action_embs):
@@ -91,7 +95,7 @@ class PickBestAutoSelectionScorer(base.SelectionScorer):
         if prompt:
             self.prompt = prompt
         else:
-            human_template = 'Given this context "{best_pick_context}" as the most important attribute, rank how good or bad this text selection is: "{best_pick}".'
+            human_template = 'Given this based_on "{best_pick_context}" as the most important attribute, rank how good or bad this text selection is: "{best_pick}".'
             human_message_prompt = HumanMessagePromptTemplate.from_template(
                 human_template
             )
@@ -122,30 +126,30 @@ class PickBest(base.RLChain):
     """
     PickBest class that utilizes the Vowpal Wabbit (VW) model for personalization.
 
-    The Chain is initialized with a set of potential actions. For each call to the Chain, a specific action will be chosen based on an input context.
+    The Chain is initialized with a set of potential to_select_from. For each call to the Chain, a specific action will be chosen based on an input based_on.
     This chosen action is then passed to the prompt that will be utilized in the subsequent call to the LLM (Language Model).
 
     The flow of this chain is:
     - Chain is initialized
-    - Chain is called input containing the context and the List of potential actions
-    - Chain chooses an action based on the context
+    - Chain is called input containing the based_on and the List of potential to_select_from
+    - Chain chooses an action based on the based_on
     - Chain calls the LLM with the chosen action
     - LLM returns a response
     - If the selection_scorer is specified, the response is checked against the selection_scorer
-    - The internal model will be updated with the context, action, and reward of the response (how good or bad the response was)
+    - The internal model will be updated with the based_on, action, and reward of the response (how good or bad the response was)
     - The response is returned
 
     input dictionary expects:
-        - at least one variable wrapped in BasedOn which will be the context to use for personalization
-        - one variable of a list wrapped in ToSelectFrom which will be the list of actions for the Vowpal Wabbit model to choose from.
+        - at least one variable wrapped in BasedOn which will be the based_on to use for personalization
+        - one variable of a list wrapped in ToSelectFrom which will be the list of to_select_from for the Vowpal Wabbit model to choose from.
             This list can either be a List of str's or a List of Dict's.
-                - Actions provided as a list of strings e.g. actions = ["action1", "action2", "action3"]
-                - If actions are provided as a list of dictionaries, each action should be a dictionary where the keys are namespace names and the values are the corresponding action strings e.g. actions = [{"namespace1": "action1", "namespace2": "action2"}, {"namespace1": "action3", "namespace2": "action4"}]
+                - Actions provided as a list of strings e.g. to_select_from = ["action1", "action2", "action3"]
+                - If to_select_from are provided as a list of dictionaries, each action should be a dictionary where the keys are namespace names and the values are the corresponding action strings e.g. to_select_from = [{"namespace1": "action1", "namespace2": "action2"}, {"namespace1": "action3", "namespace2": "action4"}]
     Extends:
         RLChain
 
     Attributes:
-        text_embedder: (PickBestTextEmbedder, optional) The text embedder to use for embedding the context and the actions. If not provided, a default embedder is used.
+        text_embedder: (PickBestTextEmbedder, optional) The text embedder to use for embedding the based_on and the to_select_from. If not provided, a default embedder is used.
     """
 
     class Selected(base.Selected):
@@ -167,13 +171,13 @@ class PickBest(base.RLChain):
         def __init__(
             self,
             inputs: Dict[str, Any],
-            actions: Dict[str, Any],
-            context: Dict[str, Any],
+            to_select_from: Dict[str, Any],
+            based_on: Dict[str, Any],
             selected: Optional[PickBest.Selected] = None,
         ):
             super().__init__(inputs=inputs, selected=selected)
-            self.actions = actions
-            self.context = context
+            self.to_select_from = to_select_from
+            self.based_on = based_on
 
     best_pick_input_key = "best_pick"
     best_pick_context_input_key = "best_pick_context"
@@ -213,7 +217,7 @@ class PickBest(base.RLChain):
             )
 
     def _call_before_predict(self, inputs: Dict[str, Any]) -> PickBest.Event:
-        context, actions = base.get_context_and_actions(inputs=inputs)
+        context, actions = base.get_based_on_and_to_select_from(inputs=inputs)
         if not actions:
             raise ValueError(
                 "No variables using 'ToSelectFrom' found in the inputs. Please include at least one variable containing a list to select from."
@@ -229,24 +233,24 @@ class PickBest(base.RLChain):
                 "No variables using 'BasedOn' found in the inputs. Please include at least one variable containing information to base the selected of ToSelectFrom on."
             )
 
-        event = PickBest.Event(inputs=inputs, actions=actions, context=context)
+        event = PickBest.Event(inputs=inputs, to_select_from=actions, based_on=context)
         return event
 
     def _call_after_predict_before_llm(
-        self, inputs: Dict[str, Any], event: Event, vwpreds: List[Tuple[int, float]]
+        self, inputs: Dict[str, Any], event: Event, prediction: List[Tuple[int, float]]
     ) -> Tuple[Dict[str, Any], PickBest.Event]:
-        prob_sum = sum(prob for _, prob in vwpreds)
-        probabilities = [prob / prob_sum for _, prob in vwpreds]
+        prob_sum = sum(prob for _, prob in prediction)
+        probabilities = [prob / prob_sum for _, prob in prediction]
         ## sample from the pmf
-        sampled_index = np.random.choice(len(vwpreds), p=probabilities)
-        sampled_ap = vwpreds[sampled_index]
+        sampled_index = np.random.choice(len(prediction), p=probabilities)
+        sampled_ap = prediction[sampled_index]
         sampled_action = sampled_ap[0]
         sampled_prob = sampled_ap[1]
         selected = PickBest.Selected(index=sampled_action, probability=sampled_prob)
         event.selected = selected
 
-        # only one key, value pair in event.actions
-        key, value = next(iter(event.actions.items()))
+        # only one key, value pair in event.to_select_from
+        key, value = next(iter(event.to_select_from.items()))
         next_chain_inputs = inputs.copy()
         next_chain_inputs.update({key: value[event.selected.index]})
         return next_chain_inputs, event
@@ -255,11 +259,11 @@ class PickBest(base.RLChain):
         self, llm_response: str, event: PickBest.Event
     ) -> Tuple[Dict[str, Any], PickBest.Event]:
         next_chain_inputs = event.inputs.copy()
-        # only one key, value pair in event.actions
-        value = next(iter(event.actions.values()))
+        # only one key, value pair in event.to_select_from
+        value = next(iter(event.to_select_from.values()))
         next_chain_inputs.update(
             {
-                self.best_pick_context_input_key: str(event.context),
+                self.best_pick_context_input_key: str(event.based_on),
                 self.best_pick_input_key: value[event.selected.index],
             }
         )
@@ -277,10 +281,10 @@ class PickBest(base.RLChain):
         run_manager: Optional[CallbackManagerForChainRun] = None,
     ) -> Dict[str, Any]:
         """
-        When chain.run() is called with the given inputs, this function is called. It is responsible for calling the VW model to choose an action (ToSelectFrom) based on the (BasedOn) context, and then calling the LLM (Language Model) with the chosen action to generate a response.
+        When chain.run() is called with the given inputs, this function is called. It is responsible for calling the VW model to choose an action (ToSelectFrom) based on the (BasedOn) based_on, and then calling the LLM (Language Model) with the chosen action to generate a response.
 
         Attributes:
-            inputs: (Dict, required) The inputs to the chain. The inputs must contain a input variables that are wrapped in BasedOn and ToSelectFrom. BasedOn is the context that will be used for selecting an ToSelectFrom action that will be passed to the LLM prompt.
+            inputs: (Dict, required) The inputs to the chain. The inputs must contain a input variables that are wrapped in BasedOn and ToSelectFrom. BasedOn is the based_on that will be used for selecting an ToSelectFrom action that will be passed to the LLM prompt.
             run_manager: (CallbackManagerForChainRun, optional) The callback manager to use for this run. If not provided, a default callback manager is used.
             
         Returns:

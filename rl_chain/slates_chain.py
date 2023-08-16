@@ -58,7 +58,7 @@ class SlatesTextEmbedder(base.Embedder):
         return action_features
 
     def to_vw_format(self, event: SlatesPersonalizerChain.Event) -> str:
-        action_features = self.to_action_features(event.actions)
+        action_features = self.to_action_features(event.to_select_from)
 
         cost = (
             -1.0 * event.selected.score
@@ -67,8 +67,8 @@ class SlatesTextEmbedder(base.Embedder):
         )
         context_str = f"slates shared {cost} "
 
-        if event.context:
-            embedded_context = base.embed(event.context, self.model)
+        if event.based_on:
+            embedded_context = base.embed(event.based_on, self.model)
             for context_item in embedded_context:
                 for ns, ctx in context_item.items():
                     context_str += (
@@ -100,7 +100,7 @@ class SlatesRandomPolicy(base.Policy):
     def predict(self, event: SlatesPersonalizerChain.Event) -> Any:
         return [
             [(random.randint(0, len(slot) - 1), 1.0 / len(slot))]
-            for _, slot in event.actions.items()
+            for _, slot in event.to_select_from.items()
         ]
 
     def learn(self, event: SlatesPersonalizerChain.Event) -> Any:
@@ -115,7 +115,7 @@ class SlatesFirstChoicePolicy(base.Policy):
         self.text_embedder = text_embedder
 
     def predict(self, event: SlatesPersonalizerChain.Event) -> Any:
-        return [[(0, 1)] for _ in event.actions]
+        return [[(0, 1)] for _ in event.to_select_from]
 
     def learn(self, event: SlatesPersonalizerChain.Event) -> Any:
         pass
@@ -186,13 +186,13 @@ class SlatesPersonalizerChain(base.RLChain):
         def __init__(
             self,
             inputs: Dict[str, Any],
-            actions: Dict[str, Any],
-            context: Dict[str, Any],
+            to_select_from: Dict[str, Any],
+            based_on: Dict[str, Any],
             selected: Optional[SlatesPersonalizerChain.Selected] = None,
         ):
             super().__init__(inputs=inputs, selected=selected)
-            self.actions = actions
-            self.context = context
+            self.to_select_from = to_select_from
+            self.based_on = based_on
 
     _reward: List[float] = PrivateAttr(default=[])
 
@@ -220,9 +220,9 @@ class SlatesPersonalizerChain(base.RLChain):
     def _call_before_predict(
         self, inputs: Dict[str, Any]
     ) -> SlatesPersonalizerChain.Event:
-        context, named_actions = base.get_context_and_actions(inputs=inputs)
+        context, actions = base.get_based_on_and_to_select_from(inputs=inputs)
         event = SlatesPersonalizerChain.Event(
-            inputs=inputs, actions=named_actions, context=context
+            inputs=inputs, to_select_from=actions, based_on=context
         )
         return event
 
@@ -240,8 +240,10 @@ class SlatesPersonalizerChain(base.RLChain):
         event.selected = selected
 
         preds = {}
-        for i, (j, a) in enumerate(zip(event.selected.indexes, event.actions.values())):
-            preds[list(event.actions.keys())[i]] = str(a[j])
+        for i, (j, a) in enumerate(
+            zip(event.selected.indexes, event.to_select_from.values())
+        ):
+            preds[list(event.to_select_from.keys())[i]] = str(a[j])
 
         next_chain_inputs = inputs.copy()
         next_chain_inputs.update(preds)

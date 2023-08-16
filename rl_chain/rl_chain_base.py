@@ -84,25 +84,25 @@ def parse_lines(parser: vw.TextFormatParser, input_str: str) -> List[vw.Example]
     return [parser.parse_line(line) for line in input_str.split("\n")]
 
 
-def get_context_and_actions(inputs: Dict[str, Any]):
-    named_actions = {
+def get_based_on_and_to_select_from(inputs: Dict[str, Any]):
+    to_select_from = {
         k: inputs[k].value
         for k in inputs.keys()
         if isinstance(inputs[k], _ToSelectFrom)
     }
 
-    if not named_actions:
+    if not to_select_from:
         raise ValueError(
             "No variables using 'ToSelectFrom' found in the inputs. Please include at least one variable containing a list to select from."
         )
 
-    context = {
+    based_on = {
         k: inputs[k].value if isinstance(inputs[k].value, list) else [inputs[k].value]
         for k in inputs.keys()
         if isinstance(inputs[k], _BasedOn)
     }
 
-    return context, named_actions
+    return based_on, to_select_from
 
 
 # end helper functions
