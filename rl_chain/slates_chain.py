@@ -57,14 +57,14 @@ class SlatesTextEmbedder(base.Embedder):
 
         return action_features
 
-    def to_vw_format(self, vw_event: SlatesPersonalizerChain.Event) -> str:
-        action_features = self.to_action_features(vw_event.actions)
+    def to_vw_format(self, event: SlatesPersonalizerChain.Event) -> str:
+        action_features = self.to_action_features(event.actions)
 
-        cost = vw_event.label.cost if vw_event.label else ""
+        cost = event.label.cost if event.label else ""
         context_str = f"slates shared {cost} "
 
-        if vw_event.context:
-            embedded_context = base.embed(vw_event.context, self.model)
+        if event.context:
+            embedded_context = base.embed(event.context, self.model)
             for context_item in embedded_context:
                 for ns, ctx in context_item.items():
                     context_str += (
@@ -81,8 +81,8 @@ class SlatesTextEmbedder(base.Embedder):
             ]
         )
         ps = (
-            [f"{a}:{p}" for a, p in vw_event.label.get_actions_and_probs()]
-            if vw_event.label
+            [f"{a}:{p}" for a, p in event.label.get_actions_and_probs()]
+            if event.label
             else [""] * len(action_features)
         )
         slots = [f"slates slot {p} |" for p in ps]
@@ -96,7 +96,7 @@ class RandomPolicy(base.Policy):
     def predict(self, event: SlatesPersonalizerChain.Event) -> Any:
         return [
             [(random.randint(0, len(slot) - 1), 1.0 / len(slot))]
-            for slot in event.actions
+            for _, slot in event.actions.items()
         ]
 
     def learn(self, event: SlatesPersonalizerChain.Event) -> Any:
@@ -111,9 +111,7 @@ class FirstChoicePolicy(base.Policy):
         self.text_embedder = text_embedder
 
     def predict(self, event: SlatesPersonalizerChain.Event) -> Any:
-        return [
-            [(0, 1)] for _ in event.actions
-        ]
+        return [[(0, 1)] for _ in event.actions]
 
     def learn(self, event: SlatesPersonalizerChain.Event) -> Any:
         pass
@@ -181,7 +179,7 @@ class SlatesPersonalizerChain(base.RLChain):
             self.cost = cost
 
         def get_actions_and_probs(self):
-            return zip(self.chosen, self.p)
+            return zip(self.chosen, self.chosen_probabilities)
 
     class Event(base.Event):
         def __init__(
@@ -218,7 +216,7 @@ class SlatesPersonalizerChain(base.RLChain):
 
         super().__init__(text_embedder=text_embedder, *args, **kwargs)
 
-    def call_before_predict(
+    def _call_before_predict(
         self, inputs: Dict[str, Any]
     ) -> SlatesPersonalizerChain.Event:
         context, named_actions = base.get_context_and_actions(inputs=inputs)
@@ -227,7 +225,7 @@ class SlatesPersonalizerChain(base.RLChain):
         )
         return event
 
-    def call_after_predict_before_llm(
+    def _call_after_predict_before_llm(
         self,
         inputs: Dict[str, Any],
         event: SlatesPersonalizerChain.Event,
@@ -241,7 +239,7 @@ class SlatesPersonalizerChain(base.RLChain):
         event.label = label
 
         preds = {}
-        for i, (j, a) in enumerate(zip(label.chosen, event.actions.values())):
+        for i, (j, a) in enumerate(zip(event.label.chosen, event.actions.values())):
             preds[list(event.actions.keys())[i]] = str(a[j])
 
         next_chain_inputs = inputs.copy()
@@ -249,13 +247,13 @@ class SlatesPersonalizerChain(base.RLChain):
 
         return next_chain_inputs, event
 
-    def call_after_llm_before_scoring(
+    def _call_after_llm_before_scoring(
         self, llm_response: str, event: SlatesPersonalizerChain.Event
     ) -> Tuple[Dict[str, Any], SlatesPersonalizerChain.Event]:
         return event.inputs, event
 
-    def call_after_scoring_before_learning(
-        self, llm_response: str, event: Event, response_quality: Optional[float]
+    def _call_after_scoring_before_learning(
+        self, event: Event, response_quality: Optional[float]
     ) -> SlatesPersonalizerChain.Event:
         event.label.cost = (
             -1.0 * response_quality if response_quality is not None else None
