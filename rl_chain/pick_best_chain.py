@@ -36,7 +36,7 @@ class PickBestFeatureEmbedder(base.Embedder):
 
         self.model = model
 
-    def feature_format(self, event: PickBest.Event) -> str:
+    def format(self, event: PickBest.Event) -> str:
         """
         Converts the based_on and to_select_from into a format that can be used by VW
         """

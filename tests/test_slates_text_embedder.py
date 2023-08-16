@@ -17,7 +17,7 @@ def test_slate_text_creation_no_label_no_emb():
     event = slates.SlatesPersonalizerChain.Event(
         inputs={}, to_select_from=named_actions, based_on={}
     )
-    vw_str_ex = feature_embedder.feature_format(event)
+    vw_str_ex = feature_embedder.format(event)
     assert vw_str_ex == expected
 
 
@@ -47,5 +47,5 @@ def test_slate_text_creation_no_label_w_emb():
     event = slates.SlatesPersonalizerChain.Event(
         inputs={}, to_select_from=named_actions, based_on={}
     )
-    vw_str_ex = feature_embedder.feature_format(event)
+    vw_str_ex = feature_embedder.format(event)
     assert vw_str_ex == expected

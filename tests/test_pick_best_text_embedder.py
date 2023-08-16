@@ -17,7 +17,7 @@ def test_pickbest_textembedder_missing_context_throws():
         inputs={}, to_select_from=named_action, based_on={}
     )
     with pytest.raises(ValueError):
-        feature_embedder.feature_format(event)
+        feature_embedder.format(event)
 
 
 def test_pickbest_textembedder_missing_actions_throws():
@@ -26,7 +26,7 @@ def test_pickbest_textembedder_missing_actions_throws():
         inputs={}, to_select_from={}, based_on={"context": "context"}
     )
     with pytest.raises(ValueError):
-        feature_embedder.feature_format(event)
+        feature_embedder.format(event)
 
 
 def test_pickbest_textembedder_no_label_no_emb():
@@ -36,7 +36,7 @@ def test_pickbest_textembedder_no_label_no_emb():
     event = pick_best_chain.PickBest.Event(
         inputs={}, to_select_from=named_actions, based_on={"context": "context"}
     )
-    vw_ex_str = feature_embedder.feature_format(event)
+    vw_ex_str = feature_embedder.format(event)
     assert vw_ex_str == expected
 
 
@@ -51,7 +51,7 @@ def test_pickbest_textembedder_w_label_no_score_no_emb():
         based_on={"context": "context"},
         selected=selected,
     )
-    vw_ex_str = feature_embedder.feature_format(event)
+    vw_ex_str = feature_embedder.format(event)
     assert vw_ex_str == expected
 
 
@@ -68,7 +68,7 @@ def test_pickbest_textembedder_w_full_label_no_emb():
         based_on={"context": "context"},
         selected=selected,
     )
-    vw_ex_str = feature_embedder.feature_format(event)
+    vw_ex_str = feature_embedder.format(event)
     assert vw_ex_str == expected
 
 
@@ -91,7 +91,7 @@ def test_pickbest_textembedder_w_full_label_w_emb():
     event = pick_best_chain.PickBest.Event(
         inputs={}, to_select_from=named_actions, based_on=context, selected=selected
     )
-    vw_ex_str = feature_embedder.feature_format(event)
+    vw_ex_str = feature_embedder.format(event)
     assert vw_ex_str == expected
 
 
@@ -103,7 +103,7 @@ def test_pickbest_textembedder_more_namespaces_no_label_no_emb():
     event = pick_best_chain.PickBest.Event(
         inputs={}, to_select_from=named_actions, based_on=context
     )
-    vw_ex_str = feature_embedder.feature_format(event)
+    vw_ex_str = feature_embedder.format(event)
     assert vw_ex_str == expected
 
 
@@ -116,7 +116,7 @@ def test_pickbest_textembedder_more_namespaces_w_label_no_emb():
     event = pick_best_chain.PickBest.Event(
         inputs={}, to_select_from=named_actions, based_on=context, selected=selected
     )
-    vw_ex_str = feature_embedder.feature_format(event)
+    vw_ex_str = feature_embedder.format(event)
     assert vw_ex_str == expected
 
 
@@ -129,7 +129,7 @@ def test_pickbest_textembedder_more_namespaces_w_full_label_no_emb():
     event = pick_best_chain.PickBest.Event(
         inputs={}, to_select_from=named_actions, based_on=context, selected=selected
     )
-    vw_ex_str = feature_embedder.feature_format(event)
+    vw_ex_str = feature_embedder.format(event)
     assert vw_ex_str == expected
 
 
@@ -161,7 +161,7 @@ def test_pickbest_textembedder_more_namespaces_w_full_label_w_full_emb():
     event = pick_best_chain.PickBest.Event(
         inputs={}, to_select_from=named_actions, based_on=context, selected=selected
     )
-    vw_ex_str = feature_embedder.feature_format(event)
+    vw_ex_str = feature_embedder.format(event)
     assert vw_ex_str == expected
 
 
@@ -194,5 +194,5 @@ def test_pickbest_textembedder_more_namespaces_w_full_label_w_partial_emb():
     event = pick_best_chain.PickBest.Event(
         inputs={}, to_select_from=named_actions, based_on=context, selected=selected
     )
-    vw_ex_str = feature_embedder.feature_format(event)
+    vw_ex_str = feature_embedder.format(event)
     assert vw_ex_str == expected

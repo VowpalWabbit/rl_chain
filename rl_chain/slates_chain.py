@@ -57,7 +57,7 @@ class SlatesFeatureEmbedder(base.Embedder):
 
         return action_features
 
-    def feature_format(self, event: SlatesPersonalizerChain.Event) -> str:
+    def format(self, event: SlatesPersonalizerChain.Event) -> str:
         action_features = self.to_action_features(event.to_select_from)
 
         cost = (

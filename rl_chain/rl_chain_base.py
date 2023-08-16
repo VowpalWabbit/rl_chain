@@ -151,11 +151,11 @@ class VwPolicy(Policy):
     def predict(self, event: Event) -> Any:
         text_parser = vw.TextFormatParser(self.workspace)
         return self.workspace.predict_one(
-            parse_lines(text_parser, self.feature_embedder.feature_format(event))
+            parse_lines(text_parser, self.feature_embedder.format(event))
         )
 
     def learn(self, event: Event):
-        vw_ex = self.feature_embedder.feature_format(event)
+        vw_ex = self.feature_embedder.format(event)
 
         text_parser = vw.TextFormatParser(self.workspace)
         multi_ex = parse_lines(text_parser, vw_ex)
@@ -163,13 +163,13 @@ class VwPolicy(Policy):
 
     def log(self, event: Event):
         if self.logger.logging_enabled():
-            vw_ex = self.feature_embedder.feature_format(event)
+            vw_ex = self.feature_embedder.format(event)
             self.logger.log(vw_ex)
 
 
 class Embedder(ABC):
     @abstractmethod
-    def feature_format(self, vw_event: Event) -> str:
+    def format(self, vw_event: Event) -> str:
         pass
 
 
