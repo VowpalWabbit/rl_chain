@@ -13,3 +13,6 @@ class VwLogger:
         if self.path:
             with open(self.path, "a") as f:
                 f.write(f"{vw_ex}\n\n")
+
+    def logging_enabled(self):
+        return bool(self.path)
