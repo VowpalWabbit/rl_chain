@@ -205,7 +205,7 @@ class Embedder(ABC):
         pass
 
 
-class SelectionScorer(ABC):
+class SelectionScorer(ABC, BaseModel):
     """Abstract method to grade the chosen selection or the response of the llm"""
 
     @abstractmethod

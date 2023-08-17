@@ -254,7 +254,7 @@ class SlatesPersonalizerChain(base.RLChain):
         **kwargs: Any,
     ):
         if selection_scorer is SENTINEL:
-            selection_scorer = base.AutoSelectionScorer(llm_chain.llm)
+            selection_scorer = base.AutoSelectionScorer(llm=llm_chain.llm)
         return SlatesPersonalizerChain(
             llm_chain=llm_chain,
             prompt=prompt,
