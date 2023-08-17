@@ -9,9 +9,9 @@ import vowpal_wabbit_next as vw
 from .vw_logger import VwLogger
 from .model_repository import ModelRepository
 from .metrics import MetricsTracker
-from langchain.prompts.prompt import PromptTemplate
+from langchain.prompts import BasePromptTemplate
 
-from pydantic import Extra, PrivateAttr
+from pydantic import Extra, BaseModel, root_validator
 
 from langchain.callbacks.manager import CallbackManagerForChainRun
 from langchain.chains.base import Chain
@@ -213,29 +213,46 @@ class SelectionScorer(ABC):
         pass
 
 
-class AutoSelectionScorer(SelectionScorer):
-    llm_chain: LLMChain
-    prompt: PromptTemplate
-    default_system_prompt = SystemMessagePromptTemplate.from_template(
-        "PLEASE RESPOND ONLY WITH A SIGNLE FLOAT AND NO OTHER TEXT EXPLANATION\n You are a strict judge that is called on to rank a response based on given criteria.\
-                You must respond with your ranking by providing a single float within the range [-1, 1], -1 being very bad response and 1 being very good response."
-    )
+class AutoSelectionScorer(SelectionScorer, BaseModel):
+    llm_chain: Union[LLMChain, None] = None
+    prompt: Union[BasePromptTemplate, None] = None
+    scoring_criteria_template: Optional[str] = None
 
-    def __init__(self, llm, prompt=None):
-        if prompt:
-            self.prompt = prompt
-        else:
-            human_template = 'Given this based_on "{rl_chain_selected_based_on}" as the most important attribute, rank how good or bad this text is: "{llm_response}".'
+    @staticmethod
+    def get_default_system_prompt() -> SystemMessagePromptTemplate:
+        return SystemMessagePromptTemplate.from_template(
+            "PLEASE RESPOND ONLY WITH A SIGNLE FLOAT AND NO OTHER TEXT EXPLANATION\n You are a strict judge that is called on to rank a response based on given criteria.\
+                    You must respond with your ranking by providing a single float within the range [0, 1], 0 being very bad response and 1 being very good response."
+        )
+
+    @staticmethod
+    def get_default_prompt() -> ChatPromptTemplate:
+        human_template = 'Given this based_on "{rl_chain_selected_based_on}" as the most important attribute, rank how good or bad this text is: "{llm_response}".'
+        human_message_prompt = HumanMessagePromptTemplate.from_template(human_template)
+        default_system_prompt = AutoSelectionScorer.get_default_system_prompt()
+        chat_prompt = ChatPromptTemplate.from_messages(
+            [default_system_prompt, human_message_prompt]
+        )
+        return chat_prompt
+
+    @root_validator(pre=True)
+    def set_prompt_and_llm_chain(cls, values):
+        llm = values.get("llm")
+        prompt = values.get("prompt")
+        scoring_criteria_template = values.get("scoring_criteria_template")
+        if prompt is None and scoring_criteria_template is None:
+            prompt = AutoSelectionScorer.get_default_prompt()
+        elif prompt is None and scoring_criteria_template is not None:
             human_message_prompt = HumanMessagePromptTemplate.from_template(
-                human_template
+                scoring_criteria_template
             )
-
-            chat_prompt = ChatPromptTemplate.from_messages(
-                [AutoSelectionScorer.default_system_prompt, human_message_prompt]
+            default_system_prompt = AutoSelectionScorer.get_default_system_prompt()
+            prompt = ChatPromptTemplate.from_messages(
+                [default_system_prompt, human_message_prompt]
             )
-            self.prompt = chat_prompt
-
-        self.llm_chain = LLMChain(llm=llm, prompt=self.prompt)
+        values["prompt"] = prompt
+        values["llm_chain"] = LLMChain(llm=llm, prompt=prompt)
+        return values
 
     def score_response(self, inputs: Dict[str, Any], llm_response: str) -> float:
         ranking = self.llm_chain.predict(llm_response=llm_response, **inputs)
@@ -268,7 +285,7 @@ class RLChain(Chain):
     llm_chain: Chain
 
     output_key: str = "result"  #: :meta private:
-    prompt: PromptTemplate
+    prompt: BasePromptTemplate
     selection_scorer: Union[SelectionScorer, None]
     policy: Optional[Policy]
     auto_embed: bool = True
@@ -284,7 +301,7 @@ class RLChain(Chain):
         vw_cmd=None,
         policy=VwPolicy,
         vw_logs: Optional[Union[str, os.PathLike]] = None,
-        metrics_step = -1,
+        metrics_step=-1,
         *args,
         **kwargs,
     ):
@@ -426,9 +443,7 @@ class RLChain(Chain):
                 f"The LLM was not able to rank and the chain was not able to adjust to this response, error: {e}"
             )
         self.metrics.on_feedback(score)
-        event = self._call_after_scoring_before_learning(
-            score=score, event=event
-        )
+        event = self._call_after_scoring_before_learning(score=score, event=event)
         self.policy.learn(event=event)
         self.policy.log(event=event)
 

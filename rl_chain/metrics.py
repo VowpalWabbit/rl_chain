@@ -1,6 +1,7 @@
 import pandas as pd
 from typing import Optional
 
+
 class MetricsTracker:
     def __init__(self, step: int):
         self._history = []
@@ -20,7 +21,7 @@ class MetricsTracker:
         self._num += score or 0
         self._i += 1
         if self._step > 0 and self._i % self._step == 0:
-            self._history.append({'step': self._i, 'score': self.score})
+            self._history.append({"step": self._i, "score": self.score})
 
     def to_pandas(self) -> pd.DataFrame:
         return pd.DataFrame(self._history)

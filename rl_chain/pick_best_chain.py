@@ -2,8 +2,6 @@ from __future__ import annotations
 
 from . import rl_chain_base as base
 
-from langchain.prompts.prompt import PromptTemplate
-
 from langchain.callbacks.manager import CallbackManagerForChainRun
 from langchain.chains.base import Chain
 from typing import Any, Dict, List, Optional, Tuple, Union
@@ -12,6 +10,7 @@ import numpy as np
 from langchain.base_language import BaseLanguageModel
 from langchain.chains.llm import LLMChain
 from sentence_transformers import SentenceTransformer
+from langchain.prompts import BasePromptTemplate
 
 # sentinel object used to distinguish between user didn't supply anything or user explicitly supplied None
 SENTINEL = object()
@@ -251,12 +250,12 @@ class PickBest(base.RLChain):
     def from_chain(
         cls,
         llm_chain: Chain,
-        prompt: PromptTemplate,
+        prompt: BasePromptTemplate,
         selection_scorer=SENTINEL,
         **kwargs: Any,
     ):
         if selection_scorer is SENTINEL:
-            selection_scorer = base.AutoSelectionScorer(llm_chain.llm)
+            selection_scorer = base.AutoSelectionScorer(llm=llm_chain.llm)
         return PickBest(
             llm_chain=llm_chain,
             prompt=prompt,
@@ -268,7 +267,7 @@ class PickBest(base.RLChain):
     def from_llm(
         cls,
         llm: BaseLanguageModel,
-        prompt: PromptTemplate,
+        prompt: BasePromptTemplate,
         selection_scorer=SENTINEL,
         **kwargs: Any,
     ):
