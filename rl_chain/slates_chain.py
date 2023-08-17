@@ -160,8 +160,6 @@ class SlatesPersonalizerChain(base.RLChain):
             self.to_select_from = to_select_from
             self.based_on = based_on
 
-    _reward: List[float] = PrivateAttr(default=[])
-
     def __init__(
         self, feature_embedder: Optional[base.Embedder] = None, *args, **kwargs
     ):
@@ -231,10 +229,9 @@ class SlatesPersonalizerChain(base.RLChain):
         return next_chain_inputs, event
 
     def _call_after_scoring_before_learning(
-        self, event: Event, response_quality: Optional[float]
+        self, event: Event, score: Optional[float]
     ) -> SlatesPersonalizerChain.Event:
-        event.selected.score = response_quality
-        self._reward.append(response_quality)
+        event.selected.score = score
         return event
 
     def _call(
@@ -243,10 +240,6 @@ class SlatesPersonalizerChain(base.RLChain):
         run_manager: Optional[CallbackManagerForChainRun] = None,
     ) -> Dict[str, str]:
         return super()._call(run_manager=run_manager, inputs=inputs)
-
-    @property
-    def reward(self):
-        return pd.DataFrame({"r": self._reward})
 
     @property
     def _chain_type(self) -> str:

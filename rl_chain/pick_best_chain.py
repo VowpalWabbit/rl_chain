@@ -218,9 +218,9 @@ class PickBest(base.RLChain):
         return next_chain_inputs, event
 
     def _call_after_scoring_before_learning(
-        self, event: PickBest.Event, response_quality: Optional[float]
+        self, event: PickBest.Event, score: Optional[float]
     ) -> Event:
-        event.selected.score = response_quality
+        event.selected.score = score
         return event
 
     def _call(
