@@ -83,41 +83,41 @@ def parse_lines(parser: vw.TextFormatParser, input_str: str) -> List[vw.Example]
     return [parser.parse_line(line) for line in input_str.split("\n")]
 
 
-def get_context_and_actions(inputs: Dict[str, Any]):
-    named_actions = {
+def get_based_on_and_to_select_from(inputs: Dict[str, Any]):
+    to_select_from = {
         k: inputs[k].value
         for k in inputs.keys()
         if isinstance(inputs[k], _ToSelectFrom)
     }
 
-    if not named_actions:
+    if not to_select_from:
         raise ValueError(
             "No variables using 'ToSelectFrom' found in the inputs. Please include at least one variable containing a list to select from."
         )
 
-    context = {
+    based_on = {
         k: inputs[k].value if isinstance(inputs[k].value, list) else [inputs[k].value]
         for k in inputs.keys()
         if isinstance(inputs[k], _BasedOn)
     }
 
-    return context, named_actions
+    return based_on, to_select_from
 
 
 # end helper functions
 
 
-class Label(ABC):
+class Selected(ABC):
     pass
 
 
 class Event(ABC):
     inputs: Dict[str, Any]
-    label: Optional[Label]
+    selected: Optional[Selected]
 
-    def __init__(self, inputs: Dict[str, Any], label: Optional[Label] = None):
+    def __init__(self, inputs: Dict[str, Any], selected: Optional[Selected] = None):
         self.inputs = inputs
-        self.label = label
+        self.selected = selected
 
 
 class Policy(ABC):
@@ -142,24 +142,24 @@ class VwPolicy(Policy):
         self,
         model_repo: ModelRepository,
         vw_cmd: Sequence[str],
-        text_embedder: Embedder,
+        feature_embedder: Embedder,
         logger: VwLogger,
         *_,
         **__,
     ):
         self.model_repo = model_repo
         self.workspace = self.model_repo.load(vw_cmd)
-        self.text_embedder = text_embedder
+        self.feature_embedder = feature_embedder
         self.logger = logger
 
     def predict(self, event: Event) -> Any:
         text_parser = vw.TextFormatParser(self.workspace)
         return self.workspace.predict_one(
-            parse_lines(text_parser, self.text_embedder.to_vw_format(event))
+            parse_lines(text_parser, self.feature_embedder.format(event))
         )
 
     def learn(self, event: Event):
-        vw_ex = self.text_embedder.to_vw_format(event)
+        vw_ex = self.feature_embedder.format(event)
 
         text_parser = vw.TextFormatParser(self.workspace)
         multi_ex = parse_lines(text_parser, vw_ex)
@@ -167,7 +167,7 @@ class VwPolicy(Policy):
 
     def log(self, event: Event):
         if self.logger.logging_enabled():
-            vw_ex = self.text_embedder.to_vw_format(event)
+            vw_ex = self.feature_embedder.format(event)
             self.logger.log(vw_ex)
 
     def save(self):
@@ -176,15 +176,15 @@ class VwPolicy(Policy):
 
 class Embedder(ABC):
     @abstractmethod
-    def to_vw_format(self, vw_event: Event) -> str:
+    def format(self, vw_event: Event) -> str:
         pass
 
 
-class ResponseValidator(ABC):
-    """Abstract method to grade the chosen action or the response of the llm"""
+class SelectionScorer(ABC):
+    """Abstract method to grade the chosen selection or the response of the llm"""
 
     @abstractmethod
-    def grade_response(self, inputs: Dict[str, Any], llm_response: str) -> float:
+    def score_response(self, inputs: Dict[str, Any], llm_response: str) -> float:
         pass
 
 
@@ -197,7 +197,7 @@ class RLChain(Chain):
         large_action_spaces (bool, optional): If set to True and vw_cmd has not been specified in the constructor, it will enable large action spaces
         vw_cmd (List[str], optional): Advanced users can set the VW command line to whatever they want, as long as it is compatible with the Type that is specified (Type Enum)
         model_save_dir (str, optional): The directory to save the VW model to. Defaults to the current directory.
-        response_validator (ResponseValidator): If set, the chain will check the response using the provided response_validator and the VW model will be updated with the result. Defaults to None.
+        selection_scorer (SelectionScorer): If set, the chain will check the response using the provided selection_scorer and the VW model will be updated with the result. Defaults to None.
 
     Notes:
         The class creates a VW model instance using the provided arguments. Before the chain object is destroyed the save_progress() function can be called. If it is called, the learned VW model is saved to a file in the current directory named `model-<checkpoint>.vw`. Checkpoints start at 1 and increment monotonically.
@@ -208,30 +208,32 @@ class RLChain(Chain):
 
     output_key: str = "result"  #: :meta private:
     prompt: PromptTemplate
-    response_validator: Union[ResponseValidator, None]
+    selection_scorer: Union[SelectionScorer, None]
     policy: Optional[Policy]
 
     def __init__(
         self,
-        text_embedder: Embedder,
-        model_save_dir = "./",
-        reset_model = False,
-        vw_cmd = None,
-        policy = VwPolicy,
+        feature_embedder: Embedder,
+        model_save_dir="./",
+        reset_model=False,
+        vw_cmd=None,
+        policy=VwPolicy,
         vw_logs: Optional[Union[str, os.PathLike]] = None,
         *args,
         **kwargs,
     ):
         super().__init__(*args, **kwargs)
-        if self.response_validator is None:
+        if self.selection_scorer is None:
             logger.warning(
-                "No response validator provided, which means that no reinforcement learning will be done in the RL chain unless learn_delayed_reward is called."
+                "No response validator provided, which means that no reinforcement learning will be done in the RL chain unless update_with_delayed_score is called."
             )
         self.policy = policy(
-            model_repo = ModelRepository(model_save_dir, logger, with_history=True, reset=reset_model),
-            vw_cmd = vw_cmd or [],
-            text_embedder=text_embedder,
-            logger=VwLogger(vw_logs)
+            model_repo=ModelRepository(
+                model_save_dir, logger, with_history=True, reset=reset_model
+            ),
+            vw_cmd=vw_cmd or [],
+            feature_embedder=feature_embedder,
+            logger=VwLogger(vw_logs),
         )
 
     class Config:
@@ -261,7 +263,7 @@ class RLChain(Chain):
 
     @abstractmethod
     def _call_after_predict_before_llm(
-        self, inputs: Dict[str, Any], event: Event, vwpreds: Any
+        self, inputs: Dict[str, Any], event: Event, prediction: Any
     ) -> Tuple[Dict[str, Any], Event]:
         pass
 
@@ -277,19 +279,19 @@ class RLChain(Chain):
     ) -> Event:
         pass
 
-    def learn_delayed_reward(
-        self, reward: float, event: Event, force_reward=False
+    def update_with_delayed_score(
+        self, score: float, event: Event, force_score=False
     ) -> None:
         """
-        Learn will be called with the reward specified and the actions/embeddings/etc stored in event
+        Learn will be called with the score specified and the actions/embeddings/etc stored in event
 
-        Will raise an error if response_validator is set, and force_reward=True was not provided during the method call
+        Will raise an error if selection_scorer is set, and force_score=True was not provided during the method call
         """
-        if self.response_validator and not force_reward:
+        if self.selection_scorer and not force_score:
             raise RuntimeError(
-                "The response validator is set, and force_reward was not set to True. Please set force_reward=True to use this function."
+                "The response validator is set, and force_score was not set to True. Please set force_score=True to use this function."
             )
-        self._call_after_scoring_before_learning(event=event, response_quality=reward)
+        self._call_after_scoring_before_learning(event=event, response_quality=score)
         self.policy.learn(event=event)
         self.policy.log(event=event)
 
@@ -301,10 +303,10 @@ class RLChain(Chain):
         _run_manager = run_manager or CallbackManagerForChainRun.get_noop_manager()
 
         event = self._call_before_predict(inputs=inputs)
-        vw_pred = self.policy.predict(event=event)
+        prediction = self.policy.predict(event=event)
 
         next_chain_inputs, event = self._call_after_predict_before_llm(
-            inputs=inputs, event=event, vwpreds=vw_pred
+            inputs=inputs, event=event, prediction=prediction
         )
 
         t = self.llm_chain.run(**next_chain_inputs, callbacks=_run_manager.get_child())
@@ -324,8 +326,8 @@ class RLChain(Chain):
 
         response_quality = None
         try:
-            if self.response_validator:
-                response_quality = self.response_validator.grade_response(
+            if self.selection_scorer:
+                response_quality = self.selection_scorer.score_response(
                     inputs=next_chain_inputs, llm_response=output
                 )
         except Exception as e:
@@ -339,7 +341,7 @@ class RLChain(Chain):
         self.policy.learn(event=event)
         self.policy.log(event=event)
 
-        return {self.output_key: {"response": output, "decision_metadata": event}}
+        return {self.output_key: {"response": output, "selection_metadata": event}}
 
     def save_progress(self) -> None:
         """

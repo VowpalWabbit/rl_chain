@@ -1,10 +1,18 @@
-from . import pick_best_chain
-from . import slates_chain
+from .pick_best_chain import (
+    PickBest,
+    PickBestAutoSelectionScorer,
+)
+from .slates_chain import (
+    SlatesPersonalizerChain,
+    SlatesAutoSelectionScorer,
+    SlatesRandomPolicy,
+    SlatesFirstChoicePolicy,
+)
 from .rl_chain_base import (
     Embed,
     BasedOn,
     ToSelectFrom,
-    ResponseValidator,
+    SelectionScorer,
     Embedder,
     Policy,
     VwPolicy,

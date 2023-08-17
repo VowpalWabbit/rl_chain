@@ -13,11 +13,11 @@ encoded_keyword = "[encoded]"
 def test_slate_text_creation_no_label_no_emb():
     named_actions = {"prefix": ["0", "1"], "context": ["bla"], "suffix": ["0", "1"]}
     expected = """slates shared  |\nslates action 0 |Action 0\nslates action 0 |Action 1\nslates action 1 |Action bla\nslates action 2 |Action 0\nslates action 2 |Action 1\nslates slot  |\nslates slot  |\nslates slot  |"""
-    text_embedder = slates.SlatesTextEmbedder()
+    feature_embedder = slates.SlatesFeatureEmbedder()
     event = slates.SlatesPersonalizerChain.Event(
-        inputs={}, actions=named_actions, context={}
+        inputs={}, to_select_from=named_actions, based_on={}
     )
-    vw_str_ex = text_embedder.to_vw_format(event)
+    vw_str_ex = feature_embedder.format(event)
     assert vw_str_ex == expected
 
 
@@ -43,9 +43,9 @@ def test_slate_text_creation_no_label_w_emb():
         "suffix": slates.base.Embed(["0", "1"]),
     }
     expected = f"""slates shared  |\nslates action 0 |Action {encoded_action00}\nslates action 0 |Action {encoded_action01}\nslates action 1 |Action {encoded_action10}\nslates action 2 |Action {encoded_action20}\nslates action 2 |Action {encoded_action21}\nslates slot  |\nslates slot  |\nslates slot  |"""
-    text_embedder = slates.SlatesTextEmbedder(model=MockEncoder())
+    feature_embedder = slates.SlatesFeatureEmbedder(model=MockEncoder())
     event = slates.SlatesPersonalizerChain.Event(
-        inputs={}, actions=named_actions, context={}
+        inputs={}, to_select_from=named_actions, based_on={}
     )
-    vw_str_ex = text_embedder.to_vw_format(event)
+    vw_str_ex = feature_embedder.format(event)
     assert vw_str_ex == expected
