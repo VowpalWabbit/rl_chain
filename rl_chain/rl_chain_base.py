@@ -224,7 +224,7 @@ class AutoSelectionScorer(SelectionScorer):
         if prompt:
             self.prompt = prompt
         else:
-            human_template = 'Given this based_on "{rl_chain_selected_based_on}" as the most important attribute, rank how good or bad this text selection is: "{rl_chain_selected}".'
+            human_template = 'Given this based_on "{rl_chain_selected_based_on}" as the most important attribute, rank how good or bad this text is: "{llm_response}".'
             human_message_prompt = HumanMessagePromptTemplate.from_template(
                 human_template
             )
