@@ -205,7 +205,6 @@ class RLChain(Chain):
     """
 
     llm_chain: Chain
-    model_repo: ModelRepository = None
 
     output_key: str = "result"  #: :meta private:
     prompt: PromptTemplate

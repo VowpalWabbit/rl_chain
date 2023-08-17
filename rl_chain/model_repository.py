@@ -41,5 +41,4 @@ class ModelRepository:
         if model_data:
             self.logger.info(f'rl_chain model is loaded from: {self.model_path}')
             return vw.Workspace(commandline, model_data=model_data)
-        self.logger.info(f'learning from scratch')
         return vw.Workspace(commandline)
