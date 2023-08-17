@@ -11,7 +11,7 @@ from .model_repository import ModelRepository
 from .metrics import MetricsTracker
 from langchain.prompts import BasePromptTemplate
 
-from pydantic import Extra, BaseModel, root_validator
+from langchain.pydantic_v1 import Extra, BaseModel, root_validator
 
 from langchain.callbacks.manager import CallbackManagerForChainRun
 from langchain.chains.base import Chain
