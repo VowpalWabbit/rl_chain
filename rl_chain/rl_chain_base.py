@@ -216,7 +216,7 @@ class SelectionScorer(ABC):
 class AutoSelectionScorer(SelectionScorer, BaseModel):
     llm_chain: Union[LLMChain, None] = None
     prompt: Union[BasePromptTemplate, None] = None
-    scoring_criteria_template: Optional[str] = None
+    scoring_criteria_template_str: Optional[str] = None
 
     @staticmethod
     def get_default_system_prompt() -> SystemMessagePromptTemplate:
@@ -239,12 +239,12 @@ class AutoSelectionScorer(SelectionScorer, BaseModel):
     def set_prompt_and_llm_chain(cls, values):
         llm = values.get("llm")
         prompt = values.get("prompt")
-        scoring_criteria_template = values.get("scoring_criteria_template")
-        if prompt is None and scoring_criteria_template is None:
+        scoring_criteria_template_str = values.get("scoring_criteria_template_str")
+        if prompt is None and scoring_criteria_template_str is None:
             prompt = AutoSelectionScorer.get_default_prompt()
-        elif prompt is None and scoring_criteria_template is not None:
+        elif prompt is None and scoring_criteria_template_str is not None:
             human_message_prompt = HumanMessagePromptTemplate.from_template(
-                scoring_criteria_template
+                scoring_criteria_template_str
             )
             default_system_prompt = AutoSelectionScorer.get_default_system_prompt()
             prompt = ChatPromptTemplate.from_messages(
