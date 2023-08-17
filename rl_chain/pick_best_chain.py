@@ -13,6 +13,10 @@ from langchain.base_language import BaseLanguageModel
 from langchain.chains.llm import LLMChain
 from sentence_transformers import SentenceTransformer
 
+import logging
+
+logger = logging.getLogger(__name__)
+
 # sentinel object used to distinguish between user didn't supply anything or user explicitly supplied None
 SENTINEL = object()
 
