@@ -1,6 +1,4 @@
-from .pick_best_chain import (
-    PickBest,
-)
+from .pick_best_chain import PickBest
 from .slates_chain import (
     SlatesPersonalizerChain,
     SlatesRandomPolicy,

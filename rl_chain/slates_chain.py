@@ -1,11 +1,6 @@
 from __future__ import annotations
 
 from . import rl_chain_base as base
-from langchain.prompts import (
-    ChatPromptTemplate,
-    SystemMessagePromptTemplate,
-    HumanMessagePromptTemplate,
-)
 from langchain.prompts.prompt import PromptTemplate
 
 from langchain.callbacks.manager import CallbackManagerForChainRun
@@ -23,6 +18,9 @@ import random
 from langchain.base_language import BaseLanguageModel
 from langchain.chains.llm import LLMChain
 from sentence_transformers import SentenceTransformer
+
+# sentinel object used to distinguish between user didn't supply anything or user explicitly supplied None
+SENTINEL = object()
 
 
 class SlatesFeatureEmbedder(base.Embedder):
@@ -223,7 +221,14 @@ class SlatesPersonalizerChain(base.RLChain):
     def _call_after_llm_before_scoring(
         self, llm_response: str, event: SlatesPersonalizerChain.Event
     ) -> Tuple[Dict[str, Any], SlatesPersonalizerChain.Event]:
-        return event.inputs, event
+        next_chain_inputs = event.inputs.copy()
+        next_chain_inputs.update(
+            {
+                self.selected_based_on_input_key: str(event.based_on),
+                self.selected_input_key: str(event.to_select_from),
+            }
+        )
+        return next_chain_inputs, event
 
     def _call_after_scoring_before_learning(
         self, event: Event, response_quality: Optional[float]
@@ -248,12 +253,34 @@ class SlatesPersonalizerChain(base.RLChain):
         return "llm_personalizer_chain"
 
     @classmethod
-    def from_chain(cls, llm_chain: Chain, prompt: PromptTemplate, **kwargs: Any):
-        return SlatesPersonalizerChain(llm_chain=llm_chain, prompt=prompt, **kwargs)
+    def from_chain(
+        cls,
+        llm_chain: Chain,
+        prompt: PromptTemplate,
+        selection_scorer=SENTINEL,
+        **kwargs: Any,
+    ):
+        if selection_scorer is SENTINEL:
+            selection_scorer = base.AutoSelectionScorer(llm_chain.llm)
+        return SlatesPersonalizerChain(
+            llm_chain=llm_chain,
+            prompt=prompt,
+            selection_scorer=selection_scorer,
+            **kwargs,
+        )
 
     @classmethod
-    def from_llm(cls, llm: BaseLanguageModel, prompt: PromptTemplate, **kwargs: Any):
+    def from_llm(
+        cls,
+        llm: BaseLanguageModel,
+        prompt: PromptTemplate,
+        selection_scorer=SENTINEL,
+        **kwargs: Any,
+    ):
         llm_chain = LLMChain(llm=llm, prompt=prompt)
         return SlatesPersonalizerChain.from_chain(
-            llm_chain=llm_chain, prompt=prompt, **kwargs
+            llm_chain=llm_chain,
+            prompt=prompt,
+            selection_scorer=selection_scorer,
+            **kwargs,
         )

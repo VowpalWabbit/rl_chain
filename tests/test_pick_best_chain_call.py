@@ -57,7 +57,7 @@ def test_update_with_delayed_score_with_auto_validator_throws():
     chain = pick_best_chain.PickBest.from_llm(
         llm=llm,
         prompt=PROMPT,
-        selection_scorer=pick_best_chain.PickBestAutoSelectionScorer(llm=auto_val_llm),
+        selection_scorer=pick_best_chain.base.AutoSelectionScorer(llm=auto_val_llm),
     )
     actions = ["0", "1", "2"]
     response = chain.run(
@@ -78,7 +78,7 @@ def test_update_with_delayed_score_force():
     chain = pick_best_chain.PickBest.from_llm(
         llm=llm,
         prompt=PROMPT,
-        selection_scorer=pick_best_chain.PickBestAutoSelectionScorer(llm=auto_val_llm),
+        selection_scorer=pick_best_chain.base.AutoSelectionScorer(llm=auto_val_llm),
     )
     actions = ["0", "1", "2"]
     response = chain.run(
@@ -96,7 +96,9 @@ def test_update_with_delayed_score_force():
 
 def test_update_with_delayed_score():
     llm, PROMPT = setup()
-    chain = pick_best_chain.PickBest.from_llm(llm=llm, prompt=PROMPT)
+    chain = pick_best_chain.PickBest.from_llm(
+        llm=llm, prompt=PROMPT, selection_scorer=None
+    )
     actions = ["0", "1", "2"]
     response = chain.run(
         User=pick_best_chain.base.BasedOn("Context"),
@@ -220,3 +222,59 @@ def test_default_embeddings_mixed_w_explicit_user_embeddings():
     selection_metadata = response["selection_metadata"]
     vw_str = feature_embedder.format(selection_metadata)
     assert vw_str == expected
+
+
+def test_default_no_scorer_specified():
+    _, PROMPT = setup()
+    chain_llm = FakeListChatModel(responses=[100])
+    feature_embedder = pick_best_chain.PickBestFeatureEmbedder(model=MockEncoder())
+    chain = pick_best_chain.PickBest.from_llm(
+        llm=chain_llm, prompt=PROMPT, feature_embedder=feature_embedder
+    )
+    actions = ["0", "1", "2"]
+    response = chain.run(
+        User=pick_best_chain.base.BasedOn("Context"),
+        action=pick_best_chain.base.ToSelectFrom(actions),
+    )
+    # chain llm used for both basic prompt and for scoring
+    assert response["response"] == "100"
+    selection_metadata = response["selection_metadata"]
+    assert selection_metadata.selected.score == 100.0
+
+
+def test_explicitly_no_scorer():
+    llm, PROMPT = setup()
+    feature_embedder = pick_best_chain.PickBestFeatureEmbedder(model=MockEncoder())
+    chain = pick_best_chain.PickBest.from_llm(
+        llm=llm, prompt=PROMPT, feature_embedder=feature_embedder, selection_scorer=None
+    )
+    actions = ["0", "1", "2"]
+    response = chain.run(
+        User=pick_best_chain.base.BasedOn("Context"),
+        action=pick_best_chain.base.ToSelectFrom(actions),
+    )
+    # chain llm used for both basic prompt and for scoring
+    assert response["response"] == "hey"
+    selection_metadata = response["selection_metadata"]
+    assert selection_metadata.selected.score == None
+
+
+def test_auto_scorer_with_user_defined_llm():
+    llm, PROMPT = setup()
+    feature_embedder = pick_best_chain.PickBestFeatureEmbedder(model=MockEncoder())
+    scorer_llm = FakeListChatModel(responses=[300])
+    chain = pick_best_chain.PickBest.from_llm(
+        llm=llm,
+        prompt=PROMPT,
+        feature_embedder=feature_embedder,
+        selection_scorer=pick_best_chain.base.AutoSelectionScorer(llm=scorer_llm),
+    )
+    actions = ["0", "1", "2"]
+    response = chain.run(
+        User=pick_best_chain.base.BasedOn("Context"),
+        action=pick_best_chain.base.ToSelectFrom(actions),
+    )
+    # chain llm used for both basic prompt and for scoring
+    assert response["response"] == "hey"
+    selection_metadata = response["selection_metadata"]
+    assert selection_metadata.selected.score == 300.0
