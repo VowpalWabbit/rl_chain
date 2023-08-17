@@ -159,7 +159,7 @@ class Policy(ABC):
         pass
 
     def save(self):
-        ...
+        pass
 
 
 class VwPolicy(Policy):
@@ -169,9 +169,10 @@ class VwPolicy(Policy):
         vw_cmd: Sequence[str],
         feature_embedder: Embedder,
         logger: VwLogger,
-        *_,
-        **__,
+        *args,
+        **kwargs,
     ):
+        super().__init__(*args, **kwargs)
         self.model_repo = model_repo
         self.workspace = self.model_repo.load(vw_cmd)
         self.feature_embedder = feature_embedder
@@ -201,7 +202,7 @@ class VwPolicy(Policy):
 
 class Embedder(ABC):
     @abstractmethod
-    def format(self, vw_event: Event) -> str:
+    def format(self, event: Event) -> str:
         pass
 
 
