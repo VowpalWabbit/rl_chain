@@ -23,12 +23,6 @@ from langchain.prompts import (
 )
 
 logger = logging.getLogger(__name__)
-logger.setLevel(logging.INFO)
-ch = logging.StreamHandler()
-formatter = logging.Formatter("%(asctime)s - %(name)s - %(levelname)s - %(message)s")
-ch.setFormatter(formatter)
-ch.setLevel(logging.INFO)
-logger.addHandler(ch)
 
 
 class _BasedOn:
@@ -168,7 +162,7 @@ class VwPolicy(Policy):
         model_repo: ModelRepository,
         vw_cmd: Sequence[str],
         feature_embedder: Embedder,
-        logger: VwLogger,
+        vw_logger: VwLogger,
         *args,
         **kwargs,
     ):
@@ -176,7 +170,7 @@ class VwPolicy(Policy):
         self.model_repo = model_repo
         self.workspace = self.model_repo.load(vw_cmd)
         self.feature_embedder = feature_embedder
-        self.logger = logger
+        self.vw_logger = vw_logger
 
     def predict(self, event: Event) -> Any:
         text_parser = vw.TextFormatParser(self.workspace)
@@ -192,9 +186,9 @@ class VwPolicy(Policy):
         self.workspace.learn_one(multi_ex)
 
     def log(self, event: Event):
-        if self.logger.logging_enabled():
+        if self.vw_logger.logging_enabled():
             vw_ex = self.feature_embedder.format(event)
-            self.logger.log(vw_ex)
+            self.vw_logger.log(vw_ex)
 
     def save(self):
         self.model_repo.save()
@@ -313,11 +307,11 @@ class RLChain(Chain):
             )
         self.policy = policy(
             model_repo=ModelRepository(
-                model_save_dir, logger, with_history=True, reset=reset_model
+                model_save_dir, with_history=True, reset=reset_model
             ),
             vw_cmd=vw_cmd or [],
             feature_embedder=feature_embedder,
-            logger=VwLogger(vw_logs),
+            vw_logger=VwLogger(vw_logs),
         )
         self.metrics = MetricsTracker(step=metrics_step)
 

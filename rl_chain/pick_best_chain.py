@@ -12,6 +12,10 @@ from langchain.chains.llm import LLMChain
 from sentence_transformers import SentenceTransformer
 from langchain.prompts import BasePromptTemplate
 
+import logging
+
+logger = logging.getLogger(__name__)
+
 # sentinel object used to distinguish between user didn't supply anything or user explicitly supplied None
 SENTINEL = object()
 
