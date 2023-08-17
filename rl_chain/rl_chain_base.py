@@ -1,14 +1,13 @@
 from __future__ import annotations
 
 import logging
-import glob
-import re
 import os
-from typing import Any, Dict, List, Optional, Tuple, Union
+from typing import Any, Dict, List, Optional, Tuple, Union, Sequence
 from abc import ABC, abstractmethod
 
 import vowpal_wabbit_next as vw
 from .vw_logger import VwLogger
+from .model_repository import ModelRepository
 from langchain.prompts.prompt import PromptTemplate
 
 from pydantic import Extra, PrivateAttr
@@ -134,17 +133,22 @@ class Policy(ABC):
     def log(self, event: Event):
         pass
 
+    def save(self):
+        ...
+
 
 class VwPolicy(Policy):
     def __init__(
         self,
-        workspace: vw.Workspace,
+        model_repo: ModelRepository,
+        vw_cmd: Sequence[str],
         feature_embedder: Embedder,
         logger: VwLogger,
         *_,
         **__,
     ):
-        self.workspace = workspace
+        self.model_repo = model_repo
+        self.workspace = self.model_repo.load(vw_cmd)
         self.feature_embedder = feature_embedder
         self.logger = logger
 
@@ -165,6 +169,9 @@ class VwPolicy(Policy):
         if self.logger.logging_enabled():
             vw_ex = self.feature_embedder.format(event)
             self.logger.log(vw_ex)
+
+    def save(self):
+        self.model_repo.save()
 
 
 class Embedder(ABC):
@@ -198,8 +205,6 @@ class RLChain(Chain):
     """
 
     llm_chain: Chain
-    next_checkpoint: int = 1
-    model_save_dir: str = "./"
 
     output_key: str = "result"  #: :meta private:
     prompt: PromptTemplate
@@ -209,8 +214,9 @@ class RLChain(Chain):
     def __init__(
         self,
         feature_embedder: Embedder,
-        model_loading=True,
-        vw_cmd=[],
+        model_save_dir="./",
+        reset_model=False,
+        vw_cmd=None,
         policy=VwPolicy,
         vw_logs: Optional[Union[str, os.PathLike]] = None,
         *args,
@@ -221,43 +227,11 @@ class RLChain(Chain):
             logger.warning(
                 "No response validator provided, which means that no reinforcement learning will be done in the RL chain unless update_with_delayed_score is called."
             )
-        next_checkpoint = 1
-        serialized_workspace = None
-
-        os.makedirs(self.model_save_dir, exist_ok=True)
-
-        if model_loading:
-            vwfile = None
-            files = glob.glob(f"{self.model_save_dir}/*.vw")
-            pattern = r"model-(\d+)\.vw"
-            highest_checkpoint = 0
-            for file in files:
-                match = re.search(pattern, file)
-                if match:
-                    checkpoint = int(match.group(1))
-                    if checkpoint >= highest_checkpoint:
-                        highest_checkpoint = checkpoint
-                        vwfile = file
-
-            if vwfile:
-                with open(vwfile, "rb") as f:
-                    serialized_workspace = f.read()
-
-            next_checkpoint = highest_checkpoint + 1
-
-        self.next_checkpoint = next_checkpoint
-        logger.info(f"next model checkpoint = {self.next_checkpoint}")
-
-        logger.info(f"vw command: {vw_cmd}")
-        # initialize things
-        workspace = None
-        if serialized_workspace:
-            workspace = vw.Workspace(vw_cmd, model_data=serialized_workspace)
-        else:
-            workspace = vw.Workspace(vw_cmd)
-
         self.policy = policy(
-            workspace=workspace,
+            model_repo=ModelRepository(
+                model_save_dir, logger, with_history=True, reset=reset_model
+            ),
+            vw_cmd=vw_cmd or [],
             feature_embedder=feature_embedder,
             logger=VwLogger(vw_logs),
         )
@@ -382,12 +356,7 @@ class RLChain(Chain):
         Note:
             Be cautious when deleting or renaming checkpoint files manually, as this could cause the function to reuse checkpoint numbers.
         """
-        serialized_workspace = self.workspace.serialize()
-        logger.info(
-            f"storing in: {self.model_save_dir}/model-{self.next_checkpoint}.vw"
-        )
-        with open(f"{self.model_save_dir}/model-{self.next_checkpoint}.vw", "wb") as f:
-            f.write(serialized_workspace)
+        self.policy.save()
 
     @property
     def _chain_type(self) -> str:
