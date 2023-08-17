@@ -4,7 +4,7 @@ import logging
 import glob
 import re
 import os
-from typing import Any, Dict, List, Optional, Tuple, Union
+from typing import Any, Dict, List, Optional, Tuple, Union, Sequence
 from abc import ABC, abstractmethod
 
 import vowpal_wabbit_next as vw
@@ -135,20 +135,22 @@ class Policy(ABC):
     def log(self, event: Event):
         pass
 
-    def save(self, model_repo: ModelRepository):
+    def save(self):
         ...
 
 
 class VwPolicy(Policy):
     def __init__(
         self,
-        workspace: vw.Workspace,
+        model_repo: ModelRepository,
+        vw_cmd: Sequence[str],
         text_embedder: Embedder,
         logger: VwLogger,
         *_,
         **__,
     ):
-        self.workspace = workspace
+        self.model_repo = model_repo
+        self.workspace = self.model_repo.load(vw_cmd)
         self.text_embedder = text_embedder
         self.logger = logger
 
@@ -170,8 +172,8 @@ class VwPolicy(Policy):
             vw_ex = self.text_embedder.to_vw_format(event)
             self.logger.log(vw_ex)
 
-    def save(self, model_repo: ModelRepository):
-        model_repo.save(self.workspace)
+    def save(self):
+        self.model_repo.save()
 
 
 class Embedder(ABC):
@@ -228,9 +230,9 @@ class RLChain(Chain):
             logger.warning(
                 "No response validator provided, which means that no reinforcement learning will be done in the RL chain unless learn_delayed_reward is called."
             )
-        self.model_repo = ModelRepository(model_save_dir, logger, with_history=True, reset=reset_model)
         self.policy = policy(
-            workspace=self.model_repo.load(vw_cmd or []),
+            model_repo = ModelRepository(model_save_dir, logger, with_history=True, reset=reset_model),
+            vw_cmd = vw_cmd or [],
             text_embedder=text_embedder,
             logger=VwLogger(vw_logs)
         )
@@ -355,7 +357,7 @@ class RLChain(Chain):
         Note:
             Be cautious when deleting or renaming checkpoint files manually, as this could cause the function to reuse checkpoint numbers.
         """
-        self.policy.save(self.model_repo)
+        self.policy.save()
 
     @property
     def _chain_type(self) -> str:
