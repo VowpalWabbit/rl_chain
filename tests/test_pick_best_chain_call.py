@@ -8,6 +8,8 @@ import pytest
 from langchain.prompts.prompt import PromptTemplate
 from langchain.chat_models import FakeListChatModel
 
+encoded_text = "[ e n c o d e d ] "
+
 
 def setup():
     _PROMPT_TEMPLATE = """This is a dummy prompt that will be ignored by the fake llm"""
@@ -126,3 +128,95 @@ def test_user_defined_scorer():
     assert response["response"] == "hey"
     selection_metadata = response["selection_metadata"]
     assert selection_metadata.selected.score == 200.0
+
+
+def test_default_embeddings():
+    llm, PROMPT = setup()
+    feature_embedder = pick_best_chain.PickBestFeatureEmbedder(model=MockEncoder())
+    chain = pick_best_chain.PickBest.from_llm(
+        llm=llm, prompt=PROMPT, feature_embedder=feature_embedder
+    )
+
+    str1 = "0"
+    str2 = "1"
+    str3 = "2"
+    encoded_str1 = encoded_text + " ".join(char for char in str1)
+    encoded_str2 = encoded_text + " ".join(char for char in str2)
+    encoded_str3 = encoded_text + " ".join(char for char in str3)
+
+    ctx_str_1 = "context1"
+    ctx_str_2 = "context2"
+
+    encoded_ctx_str_1 = encoded_text + " ".join(char for char in ctx_str_1)
+    encoded_ctx_str_2 = encoded_text + " ".join(char for char in ctx_str_2)
+
+    expected = f"""shared |User {ctx_str_1 + " " + encoded_ctx_str_1} \n|action {str1 + " " + encoded_str1} \n|action {str2 + " " + encoded_str2} \n|action {str3 + " " + encoded_str3} """
+
+    actions = [str1, str2, str3]
+
+    response = chain.run(
+        User=pick_best_chain.base.BasedOn(ctx_str_1),
+        action=pick_best_chain.base.ToSelectFrom(actions),
+    )
+    selection_metadata = response["selection_metadata"]
+    vw_str = feature_embedder.format(selection_metadata)
+    assert vw_str == expected
+
+
+def test_default_embeddings_off():
+    llm, PROMPT = setup()
+    feature_embedder = pick_best_chain.PickBestFeatureEmbedder(model=MockEncoder())
+    chain = pick_best_chain.PickBest.from_llm(
+        llm=llm, prompt=PROMPT, feature_embedder=feature_embedder, auto_embed=False
+    )
+
+    str1 = "0"
+    str2 = "1"
+    str3 = "2"
+    ctx_str_1 = "context1"
+
+    expected = f"""shared |User {ctx_str_1} \n|action {str1} \n|action {str2} \n|action {str3} """
+
+    actions = [str1, str2, str3]
+
+    response = chain.run(
+        User=pick_best_chain.base.BasedOn(ctx_str_1),
+        action=pick_best_chain.base.ToSelectFrom(actions),
+    )
+    selection_metadata = response["selection_metadata"]
+    vw_str = feature_embedder.format(selection_metadata)
+    assert vw_str == expected
+
+
+def test_default_embeddings_mixed_w_explicit_user_embeddings():
+    llm, PROMPT = setup()
+    feature_embedder = pick_best_chain.PickBestFeatureEmbedder(model=MockEncoder())
+    chain = pick_best_chain.PickBest.from_llm(
+        llm=llm, prompt=PROMPT, feature_embedder=feature_embedder
+    )
+
+    str1 = "0"
+    str2 = "1"
+    str3 = "2"
+    encoded_str1 = encoded_text + " ".join(char for char in str1)
+    encoded_str2 = encoded_text + " ".join(char for char in str2)
+    encoded_str3 = encoded_text + " ".join(char for char in str3)
+
+    ctx_str_1 = "context1"
+    ctx_str_2 = "context2"
+
+    encoded_ctx_str_1 = encoded_text + " ".join(char for char in ctx_str_1)
+    encoded_ctx_str_2 = encoded_text + " ".join(char for char in ctx_str_2)
+
+    expected = f"""shared |User {encoded_ctx_str_1} |User2 {ctx_str_2 + " " + encoded_ctx_str_2} \n|action {str1 + " " + encoded_str1} \n|action {str2 + " " + encoded_str2} \n|action {encoded_str3} """
+
+    actions = [str1, str2, pick_best_chain.base.Embed(str3)]
+
+    response = chain.run(
+        User=pick_best_chain.base.BasedOn(pick_best_chain.base.Embed(ctx_str_1)),
+        User2=pick_best_chain.base.BasedOn(ctx_str_2),
+        action=pick_best_chain.base.ToSelectFrom(actions),
+    )
+    selection_metadata = response["selection_metadata"]
+    vw_str = feature_embedder.format(selection_metadata)
+    assert vw_str == expected

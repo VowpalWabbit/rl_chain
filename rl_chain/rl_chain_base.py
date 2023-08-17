@@ -55,8 +55,9 @@ def ToSelectFrom(anything):
 
 
 class _Embed:
-    def __init__(self, value):
+    def __init__(self, value, keep=False):
         self.value = value
+        self.keep = keep
 
     def __str__(self):
         return str(self.value)
@@ -64,16 +65,22 @@ class _Embed:
     __repr__ = __str__
 
 
-def Embed(anything):
+def Embed(anything, keep=False):
     if isinstance(anything, _ToSelectFrom):
-        return ToSelectFrom(Embed(anything.value))
+        return ToSelectFrom(Embed(anything.value, keep=keep))
     elif isinstance(anything, _BasedOn):
-        return BasedOn(Embed(anything.value))
+        return BasedOn(Embed(anything.value, keep=keep))
     if isinstance(anything, list):
-        return [Embed(v) for v in anything]
+        return [Embed(v, keep=keep) for v in anything]
     elif isinstance(anything, dict):
-        return {k: _Embed(v) for k, v in anything.items()}
-    return _Embed(anything)
+        return {k: Embed(v, keep=keep) for k, v in anything.items()}
+    elif isinstance(anything, _Embed):
+        return anything
+    return _Embed(anything, keep=keep)
+
+
+def EmbedAndKeep(anything):
+    return Embed(anything, keep=True)
 
 
 # helper functions
@@ -102,6 +109,17 @@ def get_based_on_and_to_select_from(inputs: Dict[str, Any]):
     }
 
     return based_on, to_select_from
+
+
+def prepare_inputs_for_autoembed(inputs: Dict[str, Any]):
+    # go over all the inputs and if something is either wrapped in _ToSelectFrom or _BasedOn, and if
+    # their inner values are not already _Embed, then wrap them in EmbedAndKeep while retaining their _ToSelectFrom or _BasedOn status
+    next_inputs = inputs.copy()
+    for k, v in next_inputs.items():
+        if isinstance(v, _ToSelectFrom) or isinstance(v, _BasedOn):
+            if not isinstance(v.value, _Embed):
+                next_inputs[k].value = EmbedAndKeep(v.value)
+    return next_inputs
 
 
 # end helper functions
@@ -210,6 +228,7 @@ class RLChain(Chain):
     prompt: PromptTemplate
     selection_scorer: Union[SelectionScorer, None]
     policy: Optional[Policy]
+    auto_embed: bool = True
 
     def __init__(
         self,
@@ -295,12 +314,24 @@ class RLChain(Chain):
         self.policy.learn(event=event)
         self.policy.log(event=event)
 
+    def set_auto_embed(self, auto_embed: bool) -> None:
+        """
+        Set whether the chain should auto embed the inputs or not. If set to False, the inputs will not be embedded and the user will need to embed the inputs themselves before calling run.
+
+        Args:
+            auto_embed (bool): Whether the chain should auto embed the inputs or not.
+        """
+        self.auto_embed = auto_embed
+
     def _call(
         self,
         inputs: Dict[str, Any],
         run_manager: Optional[CallbackManagerForChainRun] = None,
     ) -> Dict[str, str]:
         _run_manager = run_manager or CallbackManagerForChainRun.get_noop_manager()
+
+        if self.auto_embed:
+            inputs = prepare_inputs_for_autoembed(inputs=inputs)
 
         event = self._call_before_predict(inputs=inputs)
         prediction = self.policy.predict(event=event)
@@ -375,11 +406,14 @@ def embed_string_type(
 ) -> Dict[str, str]:
     """Helper function to embed a string or an _Embed object."""
     join_char = ""
+    keep_str = ""
     if isinstance(item, _Embed):
         encoded = model.encode(item.value)
         join_char = " "
+        if item.keep:
+            keep_str = item.value.replace(" ", "_") + " "
     elif isinstance(item, str):
-        encoded = item
+        encoded = item.replace(" ", "_")
         join_char = ""
     else:
         raise ValueError(f"Unsupported type {type(item)} for embedding")
@@ -389,7 +423,7 @@ def embed_string_type(
             "The default namespace must be provided when embedding a string or _Embed object."
         )
 
-    return {namespace: join_char.join(map(str, encoded))}
+    return {namespace: keep_str + join_char.join(map(str, encoded))}
 
 
 def embed_dict_type(item: Dict, model: Any) -> Dict[str, Union[str, List[str]]]:

@@ -45,15 +45,22 @@ class SlatesFeatureEmbedder(base.Embedder):
         def _str(embedding):
             return " ".join([f"{i}:{e}" for i, e in enumerate(embedding)])
 
-        action_features = [
-            [
-                _str(self.model.encode(action.value))
-                if isinstance(action, base._Embed)
-                else action.replace(" ", "_")
-                for action in slot
-            ]
-            for slot in actions.values()
-        ]
+        action_features = []
+        for slot in actions.values():
+            slot_features = []
+            for action in slot:
+                if isinstance(action, base._Embed) and action.keep:
+                    feature = (
+                        action.value.replace(" ", "_")
+                        + " "
+                        + _str(self.model.encode(action.value))
+                    )
+                elif isinstance(action, base._Embed):
+                    feature = _str(self.model.encode(action.value))
+                else:
+                    feature = action.replace(" ", "_")
+                slot_features.append(feature)
+            action_features.append(slot_features)
 
         return action_features
 
