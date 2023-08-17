@@ -21,7 +21,7 @@ class ModelRepository:
 
     def save(self, workspace: vw.Workspace) -> None:
         with open(self.model_path, "wb") as f:
-            self.logger.info(f"storing in: {self.model_path}")
+            self.logger.info(f"storing rl_chain model in: {self.model_path}")
             f.write(workspace.serialize())
         if self.with_history:
             shutil.copyfile(self.model_path, self.folder / f"model-{self.get_tag()}.vw")
