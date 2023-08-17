@@ -96,7 +96,7 @@ def test_pickbest_textembedder_w_full_label_w_emb():
 
 
 def test_pickbest_textembedder_w_full_label_w_embed_and_keep():
-    text_embedder = pick_best_chain.PickBestTextEmbedder(model=MockEncoder())
+    feature_embedder = pick_best_chain.PickBestFeatureEmbedder(model=MockEncoder())
     str1 = "0"
     str2 = "1"
     str3 = "2"
@@ -109,14 +109,12 @@ def test_pickbest_textembedder_w_full_label_w_embed_and_keep():
 
     named_actions = {"action1": pick_best_chain.base.EmbedAndKeep([str1, str2, str3])}
     context = {"context": pick_best_chain.base.EmbedAndKeep(ctx_str_1)}
-    expected = f"""shared |context {ctx_str_1 + " " + encoded_ctx_str_1} \n0:0.0:1.0 |action1 {str1 + " " + encoded_str1} \n|action1 {str2 + " " + encoded_str2} \n|action1 {str3 + " " + encoded_str3} """
-    label = pick_best_chain.PickBest.Label(
-        chosen_action=0, chosen_action_probability=1.0, cost=0.0
-    )
+    expected = f"""shared |context {ctx_str_1 + " " + encoded_ctx_str_1} \n0:-0.0:1.0 |action1 {str1 + " " + encoded_str1} \n|action1 {str2 + " " + encoded_str2} \n|action1 {str3 + " " + encoded_str3} """
+    selected = pick_best_chain.PickBest.Selected(index=0, probability=1.0, score=0.0)
     event = pick_best_chain.PickBest.Event(
-        inputs={}, actions=named_actions, context=context, label=label
+        inputs={}, to_select_from=named_actions, based_on=context, selected=selected
     )
-    vw_ex_str = text_embedder.to_vw_format(event)
+    vw_ex_str = feature_embedder.format(event)
     assert vw_ex_str == expected
 
 
@@ -191,7 +189,7 @@ def test_pickbest_textembedder_more_namespaces_w_full_label_w_full_emb():
 
 
 def test_pickbest_textembedder_more_namespaces_w_full_label_w_full_embed_and_keep():
-    text_embedder = pick_best_chain.PickBestTextEmbedder(model=MockEncoder())
+    feature_embedder = pick_best_chain.PickBestFeatureEmbedder(model=MockEncoder())
 
     str1 = "0"
     str2 = "1"
@@ -214,15 +212,13 @@ def test_pickbest_textembedder_more_namespaces_w_full_label_w_full_embed_and_kee
         "context1": pick_best_chain.base.EmbedAndKeep(ctx_str_1),
         "context2": pick_best_chain.base.EmbedAndKeep(ctx_str_2),
     }
-    expected = f"""shared |context1 {ctx_str_1 + " " + encoded_ctx_str_1} |context2 {ctx_str_2 + " " + encoded_ctx_str_2} \n0:0.0:1.0 |a {str1 + " " + encoded_str1} |b {str1 + " " + encoded_str1} \n|action1 {str2 + " " + encoded_str2} \n|action1 {str3 + " " + encoded_str3} """
+    expected = f"""shared |context1 {ctx_str_1 + " " + encoded_ctx_str_1} |context2 {ctx_str_2 + " " + encoded_ctx_str_2} \n0:-0.0:1.0 |a {str1 + " " + encoded_str1} |b {str1 + " " + encoded_str1} \n|action1 {str2 + " " + encoded_str2} \n|action1 {str3 + " " + encoded_str3} """
 
-    label = pick_best_chain.PickBest.Label(
-        chosen_action=0, chosen_action_probability=1.0, cost=0.0
-    )
+    selected = pick_best_chain.PickBest.Selected(index=0, probability=1.0, score=0.0)
     event = pick_best_chain.PickBest.Event(
-        inputs={}, actions=named_actions, context=context, label=label
+        inputs={}, to_select_from=named_actions, based_on=context, selected=selected
     )
-    vw_ex_str = text_embedder.to_vw_format(event)
+    vw_ex_str = feature_embedder.format(event)
     assert vw_ex_str == expected
 
 
@@ -260,7 +256,7 @@ def test_pickbest_textembedder_more_namespaces_w_full_label_w_partial_emb():
 
 
 def test_pickbest_textembedder_more_namespaces_w_full_label_w_partial_embed_and_keep():
-    text_embedder = pick_best_chain.PickBestTextEmbedder(model=MockEncoder())
+    feature_embedder = pick_best_chain.PickBestFeatureEmbedder(model=MockEncoder())
 
     str1 = "0"
     str2 = "1"
@@ -285,20 +281,18 @@ def test_pickbest_textembedder_more_namespaces_w_full_label_w_partial_embed_and_
         "context1": ctx_str_1,
         "context2": pick_best_chain.base.EmbedAndKeep(ctx_str_2),
     }
-    expected = f"""shared |context1 {ctx_str_1} |context2 {ctx_str_2 + " " + encoded_ctx_str_2} \n0:0.0:1.0 |a {str1} |b {str1 + " " + encoded_str1} \n|action1 {str2} \n|action1 {str3 + " " + encoded_str3} """
+    expected = f"""shared |context1 {ctx_str_1} |context2 {ctx_str_2 + " " + encoded_ctx_str_2} \n0:-0.0:1.0 |a {str1} |b {str1 + " " + encoded_str1} \n|action1 {str2} \n|action1 {str3 + " " + encoded_str3} """
 
-    label = pick_best_chain.PickBest.Label(
-        chosen_action=0, chosen_action_probability=1.0, cost=0.0
-    )
+    selected = pick_best_chain.PickBest.Selected(index=0, probability=1.0, score=0.0)
     event = pick_best_chain.PickBest.Event(
-        inputs={}, actions=named_actions, context=context, label=label
+        inputs={}, to_select_from=named_actions, based_on=context, selected=selected
     )
-    vw_ex_str = text_embedder.to_vw_format(event)
+    vw_ex_str = feature_embedder.format(event)
     assert vw_ex_str == expected
 
 
 def test_raw_features_underscored():
-    text_embedder = pick_best_chain.PickBestTextEmbedder(model=MockEncoder())
+    feature_embedder = pick_best_chain.PickBestFeatureEmbedder(model=MockEncoder())
     str1 = "this is a long string"
     str1_underscored = str1.replace(" ", "_")
     encoded_str1 = encoded_text + " ".join(char for char in str1)
@@ -314,9 +308,9 @@ def test_raw_features_underscored():
         f"""shared |context {ctx_str_underscored} \n|action {str1_underscored} """
     )
     event = pick_best_chain.PickBest.Event(
-        inputs={}, actions=named_actions, context=context
+        inputs={}, to_select_from=named_actions, based_on=context
     )
-    vw_ex_str = text_embedder.to_vw_format(event)
+    vw_ex_str = feature_embedder.format(event)
     assert vw_ex_str == expected_no_embed
 
     # Just embeddings
@@ -324,9 +318,9 @@ def test_raw_features_underscored():
     context = {"context": pick_best_chain.base.Embed(ctx_str)}
     expected_embed = f"""shared |context {encoded_ctx_str} \n|action {encoded_str1} """
     event = pick_best_chain.PickBest.Event(
-        inputs={}, actions=named_actions, context=context
+        inputs={}, to_select_from=named_actions, based_on=context
     )
-    vw_ex_str = text_embedder.to_vw_format(event)
+    vw_ex_str = feature_embedder.format(event)
     assert vw_ex_str == expected_embed
 
     # Embeddings and raw features
@@ -334,7 +328,7 @@ def test_raw_features_underscored():
     context = {"context": pick_best_chain.base.EmbedAndKeep(ctx_str)}
     expected_embed_and_keep = f"""shared |context {ctx_str_underscored + " " + encoded_ctx_str} \n|action {str1_underscored + " " + encoded_str1} """
     event = pick_best_chain.PickBest.Event(
-        inputs={}, actions=named_actions, context=context
+        inputs={}, to_select_from=named_actions, based_on=context
     )
-    vw_ex_str = text_embedder.to_vw_format(event)
+    vw_ex_str = feature_embedder.format(event)
     assert vw_ex_str == expected_embed_and_keep

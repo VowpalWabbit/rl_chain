@@ -121,6 +121,8 @@ def prepare_inputs_for_autoembed(inputs: Dict[str, Any]):
             if not isinstance(v.value, _Embed):
                 next_inputs[k].value = EmbedAndKeep(v.value)
     return next_inputs
+
+
 # end helper functions
 
 

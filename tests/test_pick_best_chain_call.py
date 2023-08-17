@@ -132,9 +132,9 @@ def test_user_defined_scorer():
 
 def test_default_embeddings():
     llm, PROMPT = setup()
-    text_embedder = pick_best_chain.PickBestTextEmbedder(model=MockEncoder())
+    feature_embedder = pick_best_chain.PickBestFeatureEmbedder(model=MockEncoder())
     chain = pick_best_chain.PickBest.from_llm(
-        llm=llm, prompt=PROMPT, text_embedder=text_embedder
+        llm=llm, prompt=PROMPT, feature_embedder=feature_embedder
     )
 
     str1 = "0"
@@ -159,15 +159,15 @@ def test_default_embeddings():
         action=pick_best_chain.base.ToSelectFrom(actions),
     )
     selection_metadata = response["selection_metadata"]
-    vw_str = text_embedder.to_vw_format(selection_metadata)
+    vw_str = feature_embedder.format(selection_metadata)
     assert vw_str == expected
 
 
 def test_default_embeddings_off():
     llm, PROMPT = setup()
-    text_embedder = pick_best_chain.PickBestTextEmbedder(model=MockEncoder())
+    feature_embedder = pick_best_chain.PickBestFeatureEmbedder(model=MockEncoder())
     chain = pick_best_chain.PickBest.from_llm(
-        llm=llm, prompt=PROMPT, text_embedder=text_embedder, auto_embed=False
+        llm=llm, prompt=PROMPT, feature_embedder=feature_embedder, auto_embed=False
     )
 
     str1 = "0"
@@ -184,15 +184,15 @@ def test_default_embeddings_off():
         action=pick_best_chain.base.ToSelectFrom(actions),
     )
     selection_metadata = response["selection_metadata"]
-    vw_str = text_embedder.to_vw_format(selection_metadata)
+    vw_str = feature_embedder.format(selection_metadata)
     assert vw_str == expected
 
 
 def test_default_embeddings_mixed_w_explicit_user_embeddings():
     llm, PROMPT = setup()
-    text_embedder = pick_best_chain.PickBestTextEmbedder(model=MockEncoder())
+    feature_embedder = pick_best_chain.PickBestFeatureEmbedder(model=MockEncoder())
     chain = pick_best_chain.PickBest.from_llm(
-        llm=llm, prompt=PROMPT, text_embedder=text_embedder
+        llm=llm, prompt=PROMPT, feature_embedder=feature_embedder
     )
 
     str1 = "0"
@@ -218,5 +218,5 @@ def test_default_embeddings_mixed_w_explicit_user_embeddings():
         action=pick_best_chain.base.ToSelectFrom(actions),
     )
     selection_metadata = response["selection_metadata"]
-    vw_str = text_embedder.to_vw_format(selection_metadata)
+    vw_str = feature_embedder.format(selection_metadata)
     assert vw_str == expected

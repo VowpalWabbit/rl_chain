@@ -70,11 +70,11 @@ def test_slate_text_create_no_label_w_embed_and_keep():
         "suffix": slates.base.EmbedAndKeep(["0", "1"]),
     }
     expected = f"""slates shared  |\nslates action 0 |Action {action00 + " " + encoded_action00}\nslates action 0 |Action {action01 + " " + encoded_action01}\nslates action 1 |Action {action10 + " " + encoded_action10}\nslates action 2 |Action {action20 + " " + encoded_action20}\nslates action 2 |Action {action21 + " " + encoded_action21}\nslates slot  |\nslates slot  |\nslates slot  |"""
-    text_embedder = slates.SlatesTextEmbedder(model=MockEncoder())
+    feature_embedder = slates.SlatesFeatureEmbedder(model=MockEncoder())
     event = slates.SlatesPersonalizerChain.Event(
-        inputs={}, actions=named_actions, context={}
+        inputs={}, to_select_from=named_actions, based_on={}
     )
-    vw_str_ex = text_embedder.to_vw_format(event)
+    vw_str_ex = feature_embedder.format(event)
     assert vw_str_ex == expected
 
 
@@ -94,31 +94,31 @@ def test_slates_raw_features_underscored():
     named_actions = {"prefix": [action00, action01]}
     context = {"context": ctx_str}
     expected_no_embed = f"""slates shared  |context {ctx_str_underscored} \nslates action 0 |Action {action00_underscored}\nslates action 0 |Action {action01_underscored}\nslates slot  |"""
-    text_embedder = slates.SlatesTextEmbedder(model=MockEncoder())
+    feature_embedder = slates.SlatesFeatureEmbedder(model=MockEncoder())
     event = slates.SlatesPersonalizerChain.Event(
-        inputs={}, actions=named_actions, context=context
+        inputs={}, to_select_from=named_actions, based_on=context
     )
-    vw_str_ex = text_embedder.to_vw_format(event)
+    vw_str_ex = feature_embedder.format(event)
     assert vw_str_ex == expected_no_embed
 
     # Just embeddings
     named_actions = {"prefix": slates.base.Embed([action00, action01])}
     context = {"context": slates.base.Embed(ctx_str)}
     expected_embed = f"""slates shared  |context {encoded_ctx_str} \nslates action 0 |Action {encoded_action00}\nslates action 0 |Action {encoded_action01}\nslates slot  |"""
-    text_embedder = slates.SlatesTextEmbedder(model=MockEncoder())
+    feature_embedder = slates.SlatesFeatureEmbedder(model=MockEncoder())
     event = slates.SlatesPersonalizerChain.Event(
-        inputs={}, actions=named_actions, context=context
+        inputs={}, to_select_from=named_actions, based_on=context
     )
-    vw_str_ex = text_embedder.to_vw_format(event)
+    vw_str_ex = feature_embedder.format(event)
     assert vw_str_ex == expected_embed
 
     # Embeddings and raw features
     named_actions = {"prefix": slates.base.EmbedAndKeep([action00, action01])}
     context = {"context": slates.base.EmbedAndKeep(ctx_str)}
     expected_embed_and_keep = f"""slates shared  |context {ctx_str_underscored + " " + encoded_ctx_str} \nslates action 0 |Action {action00_underscored + " " + encoded_action00}\nslates action 0 |Action {action01_underscored + " " + encoded_action01}\nslates slot  |"""
-    text_embedder = slates.SlatesTextEmbedder(model=MockEncoder())
+    feature_embedder = slates.SlatesFeatureEmbedder(model=MockEncoder())
     event = slates.SlatesPersonalizerChain.Event(
-        inputs={}, actions=named_actions, context=context
+        inputs={}, to_select_from=named_actions, based_on=context
     )
-    vw_str_ex = text_embedder.to_vw_format(event)
+    vw_str_ex = feature_embedder.format(event)
     assert vw_str_ex == expected_embed_and_keep
