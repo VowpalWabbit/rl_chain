@@ -1,10 +1,6 @@
-from .pick_best_chain import (
-    PickBest,
-    PickBestAutoSelectionScorer,
-)
+from .pick_best_chain import PickBest
 from .slates_chain import (
     SlatesPersonalizerChain,
-    SlatesAutoSelectionScorer,
     SlatesRandomPolicy,
     SlatesFirstChoicePolicy,
 )
@@ -13,6 +9,7 @@ from .rl_chain_base import (
     BasedOn,
     ToSelectFrom,
     SelectionScorer,
+    AutoSelectionScorer,
     Embedder,
     Policy,
     VwPolicy,

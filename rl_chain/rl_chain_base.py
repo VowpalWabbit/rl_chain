@@ -15,6 +15,12 @@ from pydantic import Extra, PrivateAttr
 
 from langchain.callbacks.manager import CallbackManagerForChainRun
 from langchain.chains.base import Chain
+from langchain.chains.llm import LLMChain
+from langchain.prompts import (
+    ChatPromptTemplate,
+    SystemMessagePromptTemplate,
+    HumanMessagePromptTemplate,
+)
 
 logger = logging.getLogger(__name__)
 logger.setLevel(logging.INFO)
@@ -207,6 +213,42 @@ class SelectionScorer(ABC):
         pass
 
 
+class AutoSelectionScorer(SelectionScorer):
+    llm_chain: LLMChain
+    prompt: PromptTemplate
+    default_system_prompt = SystemMessagePromptTemplate.from_template(
+        "PLEASE RESPOND ONLY WITH A SIGNLE FLOAT AND NO OTHER TEXT EXPLANATION\n You are a strict judge that is called on to rank a response based on given criteria.\
+                You must respond with your ranking by providing a single float within the range [-1, 1], -1 being very bad response and 1 being very good response."
+    )
+
+    def __init__(self, llm, prompt=None):
+        if prompt:
+            self.prompt = prompt
+        else:
+            human_template = 'Given this based_on "{rl_chain_selected_based_on}" as the most important attribute, rank how good or bad this text is: "{llm_response}".'
+            human_message_prompt = HumanMessagePromptTemplate.from_template(
+                human_template
+            )
+
+            chat_prompt = ChatPromptTemplate.from_messages(
+                [AutoSelectionScorer.default_system_prompt, human_message_prompt]
+            )
+            self.prompt = chat_prompt
+
+        self.llm_chain = LLMChain(llm=llm, prompt=self.prompt)
+
+    def score_response(self, inputs: Dict[str, Any], llm_response: str) -> float:
+        ranking = self.llm_chain.predict(llm_response=llm_response, **inputs)
+        ranking = ranking.strip()
+        try:
+            resp = float(ranking)
+            return resp
+        except Exception as e:
+            raise RuntimeError(
+                f"The llm did not manage to rank the response as expected, there is always the option to try again or tweak the reward prompt. Error: {e}"
+            )
+
+
 class RLChain(Chain):
     """
     RLChain class that utilizes the Vowpal Wabbit (VW) model for personalization.
@@ -230,6 +272,8 @@ class RLChain(Chain):
     selection_scorer: Union[SelectionScorer, None]
     policy: Optional[Policy]
     auto_embed: bool = True
+    selected_input_key = "rl_chain_selected"
+    selected_based_on_input_key = "rl_chain_selected_based_on"
     metrics: Optional[MetricsTracker] = None
 
     def __init__(
@@ -280,6 +324,16 @@ class RLChain(Chain):
         """
         return [self.output_key]
 
+    def _validate_inputs(self, inputs: Dict[str, Any]) -> None:
+        super()._validate_inputs(inputs)
+        if (
+            self.selected_input_key in inputs.keys()
+            or self.selected_based_on_input_key in inputs.keys()
+        ):
+            raise ValueError(
+                f"The rl chain does not accept '{self.selected_input_key}' or '{self.selected_based_on_input_key}' as input keys, they are reserved for internal use during auto reward."
+            )
+
     @abstractmethod
     def _call_before_predict(self, inputs: Dict[str, Any]) -> Event:
         pass
@@ -312,7 +366,7 @@ class RLChain(Chain):
         """
         if self.selection_scorer and not force_score:
             raise RuntimeError(
-                "The response validator is set, and force_score was not set to True. Please set force_score=True to use this function."
+                "The selection scorer is set, and force_score was not set to True. Please set force_score=True to use this function."
             )
         self.metrics.on_feedback(score)
         self._call_after_scoring_before_learning(event=event, score=score)

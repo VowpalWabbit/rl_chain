@@ -2,12 +2,6 @@ from __future__ import annotations
 
 from . import rl_chain_base as base
 
-from langchain.prompts import (
-    ChatPromptTemplate,
-    SystemMessagePromptTemplate,
-    HumanMessagePromptTemplate,
-)
-
 from langchain.prompts.prompt import PromptTemplate
 
 from langchain.callbacks.manager import CallbackManagerForChainRun
@@ -18,6 +12,9 @@ import numpy as np
 from langchain.base_language import BaseLanguageModel
 from langchain.chains.llm import LLMChain
 from sentence_transformers import SentenceTransformer
+
+# sentinel object used to distinguish between user didn't supply anything or user explicitly supplied None
+SENTINEL = object()
 
 
 class PickBestFeatureEmbedder(base.Embedder):
@@ -83,45 +80,6 @@ class PickBestFeatureEmbedder(base.Embedder):
         return example_string[:-1]
 
 
-class PickBestAutoSelectionScorer(base.SelectionScorer):
-    llm_chain: LLMChain
-    prompt: PromptTemplate
-    default_system_prompt = SystemMessagePromptTemplate.from_template(
-        "PLEASE RESPOND ONLY WITH A SIGNLE FLOAT AND NO OTHER TEXT EXPLANATION\n You are a strict judge that is called on to rank a response based on given criteria.\
-                You must respond with your ranking by providing a single float within the range [-1, 1], -1 being very bad response and 1 being very good response."
-    )
-
-    def __init__(self, llm, prompt=None):
-        if prompt:
-            self.prompt = prompt
-        else:
-            human_template = 'Given this based_on "{best_pick_context}" as the most important attribute, rank how good or bad this text selection is: "{best_pick}".'
-            human_message_prompt = HumanMessagePromptTemplate.from_template(
-                human_template
-            )
-
-            chat_prompt = ChatPromptTemplate.from_messages(
-                [
-                    PickBestAutoSelectionScorer.default_system_prompt,
-                    human_message_prompt,
-                ]
-            )
-            self.prompt = chat_prompt
-
-        self.llm_chain = LLMChain(llm=llm, prompt=self.prompt)
-
-    def score_response(self, inputs: Dict[str, Any], llm_response: str) -> float:
-        ranking = self.llm_chain.predict(llm_response=llm_response, **inputs)
-        ranking = ranking.strip()
-        try:
-            resp = float(ranking)
-            return resp
-        except Exception as e:
-            raise RuntimeError(
-                f"The llm did not manage to rank the response as expected, there is always the option to try again or tweak the reward prompt. Error: {e}"
-            )
-
-
 class PickBest(base.RLChain):
     """
     PickBest class that utilizes the Vowpal Wabbit (VW) model for personalization.
@@ -179,9 +137,6 @@ class PickBest(base.RLChain):
             self.to_select_from = to_select_from
             self.based_on = based_on
 
-    best_pick_input_key = "best_pick"
-    best_pick_context_input_key = "best_pick_context"
-
     def __init__(
         self,
         feature_embedder: Optional[PickBestFeatureEmbedder] = None,
@@ -208,16 +163,6 @@ class PickBest(base.RLChain):
             feature_embedder = PickBestFeatureEmbedder()
 
         super().__init__(feature_embedder=feature_embedder, *args, **kwargs)
-
-    def _validate_inputs(self, inputs: Dict[str, Any]) -> None:
-        super()._validate_inputs(inputs)
-        if (
-            self.best_pick_input_key in inputs.keys()
-            or self.best_pick_context_input_key in inputs.keys()
-        ):
-            raise ValueError(
-                f"The PickBest chain does not accept '{self.best_pick_input_key}' or '{self.best_pick_context_input_key}' as input keys, they are reserved for internal use during auto reward."
-            )
 
     def _call_before_predict(self, inputs: Dict[str, Any]) -> PickBest.Event:
         context, actions = base.get_based_on_and_to_select_from(inputs=inputs)
@@ -266,8 +211,8 @@ class PickBest(base.RLChain):
         value = next(iter(event.to_select_from.values()))
         next_chain_inputs.update(
             {
-                self.best_pick_context_input_key: str(event.based_on),
-                self.best_pick_input_key: value[event.selected.index],
+                self.selected_based_on_input_key: str(event.based_on),
+                self.selected_input_key: value[event.selected.index],
             }
         )
         return next_chain_inputs, event
@@ -300,13 +245,37 @@ class PickBest(base.RLChain):
 
     @property
     def _chain_type(self) -> str:
-        return "llm_rl_chain_pick_best_chain"
+        return "rl_chain_pick_best"
 
     @classmethod
-    def from_chain(cls, llm_chain: Chain, prompt: PromptTemplate, **kwargs: Any):
-        return PickBest(llm_chain=llm_chain, prompt=prompt, **kwargs)
+    def from_chain(
+        cls,
+        llm_chain: Chain,
+        prompt: PromptTemplate,
+        selection_scorer=SENTINEL,
+        **kwargs: Any,
+    ):
+        if selection_scorer is SENTINEL:
+            selection_scorer = base.AutoSelectionScorer(llm_chain.llm)
+        return PickBest(
+            llm_chain=llm_chain,
+            prompt=prompt,
+            selection_scorer=selection_scorer,
+            **kwargs,
+        )
 
     @classmethod
-    def from_llm(cls, llm: BaseLanguageModel, prompt: PromptTemplate, **kwargs: Any):
+    def from_llm(
+        cls,
+        llm: BaseLanguageModel,
+        prompt: PromptTemplate,
+        selection_scorer=SENTINEL,
+        **kwargs: Any,
+    ):
         llm_chain = LLMChain(llm=llm, prompt=prompt)
-        return PickBest.from_chain(llm_chain=llm_chain, prompt=prompt, **kwargs)
+        return PickBest.from_chain(
+            llm_chain=llm_chain,
+            prompt=prompt,
+            selection_scorer=selection_scorer,
+            **kwargs,
+        )
