@@ -7,6 +7,7 @@ from langchain.chains.base import Chain
 from typing import Any, Dict, List, Optional, Tuple, Union
 
 import numpy as np
+import random
 from langchain.base_language import BaseLanguageModel
 from langchain.chains.llm import LLMChain
 from sentence_transformers import SentenceTransformer
@@ -83,6 +84,21 @@ class PickBestFeatureEmbedder(base.Embedder):
         return example_string[:-1]
 
 
+class PickBestRandomPolicy(base.Policy):
+    def __init__(self, feature_embedder: base.Embedder, *_, **__):
+        self.feature_embedder = feature_embedder
+
+    def predict(self, event: PickBest.Event) -> List[Tuple[int, float]]:
+        num_items = len(event.to_select_from)
+        return [(i, 1.0 / num_items) for i in range(num_items)]
+
+    def learn(self, event: PickBest.Event) -> Any:
+        pass
+
+    def log(self, event: PickBest.Event) -> Any:
+        pass
+
+
 class PickBest(base.RLChain):
     """
     PickBest class that utilizes the Vowpal Wabbit (VW) model for personalization.
@@ -153,7 +169,7 @@ class PickBest(base.RLChain):
                 "--quiet",
                 "--interactions=::",
                 "--coin",
-                "--epsilon=0.2",
+                "--squarecb",
             ]
         else:
             if "--cb_explore_adf" not in vw_cmd:

@@ -4,7 +4,7 @@ from typing import Dict, Any
 
 class MockScorer(SelectionScorer):
     def score_response(
-        self, inputs: Dict[str, Any], llm_response: str, **kwargs
+        self, inputs: Dict[str, Any], llm_response: str, event: Any
     ) -> float:
         return float(llm_response)
 
