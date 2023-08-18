@@ -3,11 +3,12 @@ from __future__ import annotations
 import logging
 import os
 from typing import Any, Dict, List, Optional, Tuple, Union, Sequence
-from abc import ABC, abstractmethod
+from abc import ABC, abstractmethod, abstractproperty
 
 import vowpal_wabbit_next as vw
 from .vw_logger import VwLogger
 from .model_repository import ModelRepository
+from .metrics import MetricsTracker
 from langchain.prompts.prompt import PromptTemplate
 
 from pydantic import Extra, PrivateAttr
@@ -137,6 +138,10 @@ class Event(ABC):
         self.inputs = inputs
         self.selected = selected
 
+    @abstractproperty
+    def metrics(self) -> Dict[str, float]:
+        ...
+
 
 class Policy(ABC):
     @abstractmethod
@@ -229,6 +234,7 @@ class RLChain(Chain):
     selection_scorer: Union[SelectionScorer, None]
     policy: Optional[Policy]
     auto_embed: bool = True
+    metrics: Optional[MetricsTracker] = None
 
     def __init__(
         self,
@@ -238,6 +244,7 @@ class RLChain(Chain):
         vw_cmd=None,
         policy=VwPolicy,
         vw_logs: Optional[Union[str, os.PathLike]] = None,
+        metrics_step = -1,
         *args,
         **kwargs,
     ):
@@ -254,6 +261,7 @@ class RLChain(Chain):
             feature_embedder=feature_embedder,
             logger=VwLogger(vw_logs),
         )
+        self.metrics = MetricsTracker(step=metrics_step)
 
     class Config:
         """Configuration for this pydantic object."""
@@ -311,6 +319,7 @@ class RLChain(Chain):
                 "The response validator is set, and force_score was not set to True. Please set force_score=True to use this function."
             )
         self._call_after_scoring_before_learning(event=event, response_quality=score)
+        self.metrics.on_reward(event=event)
         self.policy.learn(event=event)
         self.policy.log(event=event)
 
@@ -335,6 +344,7 @@ class RLChain(Chain):
 
         event = self._call_before_predict(inputs=inputs)
         prediction = self.policy.predict(event=event)
+        self.metrics.on_decision()
 
         next_chain_inputs, event = self._call_after_predict_before_llm(
             inputs=inputs, event=event, prediction=prediction
@@ -369,6 +379,7 @@ class RLChain(Chain):
         event = self._call_after_scoring_before_learning(
             response_quality=response_quality, event=event
         )
+        self.metrics.on_reward(event=event)
         self.policy.learn(event=event)
         self.policy.log(event=event)
 

@@ -178,6 +178,12 @@ class PickBest(base.RLChain):
             super().__init__(inputs=inputs, selected=selected)
             self.to_select_from = to_select_from
             self.based_on = based_on
+        
+        @property
+        def metrics(self) -> Dict[str, float]:
+            return {
+                'score': self.selected.score if self.selected else 0.0,
+            }
 
     best_pick_input_key = "best_pick"
     best_pick_context_input_key = "best_pick_context"

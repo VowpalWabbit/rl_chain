@@ -1,0 +1,25 @@
+import pandas as pd
+
+class MetricsTracker:
+    def __init__(self, step):
+        self._history = []
+        self._step = step
+        self._i = 0
+        self._num = 0
+        self._denum = 0
+
+    @property
+    def score(self):
+        return self._num / self._denum if self._denum > 0 else 0
+
+    def on_decision(self):
+        self._denum += 1
+
+    def on_reward(self, event):
+        self._num += event.metrics['score']
+        self._i += 1
+        if self._step > 0 and self._i % self._step == 0:
+            self._history.append({'step': self._i, 'score': self.score})
+
+    def to_pandas(self):
+        return pd.DataFrame(self._history)

@@ -201,6 +201,12 @@ class SlatesPersonalizerChain(base.RLChain):
             self.to_select_from = to_select_from
             self.based_on = based_on
 
+        @property
+        def metrics(self) -> Dict[str, float]:
+            return {
+                'score': self.selected.score if self.selected else 0.0,
+            }
+
     _reward: List[float] = PrivateAttr(default=[])
 
     def __init__(
