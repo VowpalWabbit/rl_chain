@@ -361,19 +361,19 @@ class RLChain(Chain):
             llm_response=output, event=event
         )
 
-        response_quality = None
+        score = None
         try:
             if self.selection_scorer:
-                response_quality = self.selection_scorer.score_response(
+                score = self.selection_scorer.score_response(
                     inputs=next_chain_inputs, llm_response=output
                 )
         except Exception as e:
             logger.info(
                 f"The LLM was not able to rank and the chain was not able to adjust to this response, error: {e}"
             )
-        self.metrics.on_feedback(response_quality)
+        self.metrics.on_feedback(score)
         event = self._call_after_scoring_before_learning(
-            response_quality=response_quality, event=event
+            score=score, event=event
         )
         self.policy.learn(event=event)
         self.policy.log(event=event)
