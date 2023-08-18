@@ -263,9 +263,9 @@ class SlatesPersonalizerChain(base.RLChain):
         return event.inputs, event
 
     def _call_after_scoring_before_learning(
-        self, event: Event, response_quality: Optional[float]
+        self, event: Event, score: Optional[float]
     ) -> SlatesPersonalizerChain.Event:
-        event.selected.score = response_quality
+        event.selected.score = score
         return event
 
     def _call(

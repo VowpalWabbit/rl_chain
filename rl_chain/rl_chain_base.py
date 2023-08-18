@@ -298,7 +298,7 @@ class RLChain(Chain):
 
     @abstractmethod
     def _call_after_scoring_before_learning(
-        self, event: Event, response_quality: Optional[float]
+        self, event: Event, score: Optional[float]
     ) -> Event:
         pass
 
@@ -315,7 +315,7 @@ class RLChain(Chain):
                 "The response validator is set, and force_score was not set to True. Please set force_score=True to use this function."
             )
         self.metrics.on_feedback(score)
-        self._call_after_scoring_before_learning(event=event, response_quality=score)
+        self._call_after_scoring_before_learning(event=event, score=score)
         self.policy.learn(event=event)
         self.policy.log(event=event)
 
