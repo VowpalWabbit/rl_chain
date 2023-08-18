@@ -3,7 +3,7 @@ from __future__ import annotations
 import logging
 import os
 from typing import Any, Dict, List, Optional, Tuple, Union, Sequence
-from abc import ABC, abstractmethod, abstractproperty
+from abc import ABC, abstractmethod
 
 import vowpal_wabbit_next as vw
 from .vw_logger import VwLogger
@@ -137,10 +137,6 @@ class Event(ABC):
     def __init__(self, inputs: Dict[str, Any], selected: Optional[Selected] = None):
         self.inputs = inputs
         self.selected = selected
-
-    @abstractproperty
-    def metrics(self) -> Dict[str, float]:
-        ...
 
 
 class Policy(ABC):
@@ -319,7 +315,6 @@ class RLChain(Chain):
                 "The response validator is set, and force_score was not set to True. Please set force_score=True to use this function."
             )
         self._call_after_scoring_before_learning(event=event, response_quality=score)
-        self.metrics.on_reward(event=event)
         self.policy.learn(event=event)
         self.policy.log(event=event)
 
@@ -379,7 +374,6 @@ class RLChain(Chain):
         event = self._call_after_scoring_before_learning(
             response_quality=response_quality, event=event
         )
-        self.metrics.on_reward(event=event)
         self.policy.learn(event=event)
         self.policy.log(event=event)
 
