@@ -7,14 +7,14 @@ class MetricsTracker:
         self._step = step
         self._i = 0
         self._num = 0
-        self._denum = 0
+        self._denom = 0
 
     @property
     def score(self) -> float:
-        return self._num / self._denum if self._denum > 0 else 0
+        return self._num / self._denom if self._denom > 0 else 0
 
     def on_decision(self) -> None:
-        self._denum += 1
+        self._denom += 1
 
     def on_feedback(self, score: Optional[float]) -> None:
         self._num += score or 0
