@@ -374,14 +374,6 @@ class RLChain(Chain):
         """
         This function should be called whenever there is a need to save the progress of the VW (Vowpal Wabbit) model within the chain. It saves the current state of the VW model to a file.
 
-        File Naming Convention:
-          The file will be named using the pattern `model-<checkpoint>.vw`, where `<checkpoint>` is a monotonically increasing number. The numbering starts from 1, and increments by 1 for each subsequent save. If there are already saved checkpoints, the number used for `<checkpoint>` will be the next in the sequence.
-
-        Example:
-            If there are already two saved checkpoints, `model-1.vw` and `model-2.vw`, the next time this function is called, it will save the model as `model-3.vw`.
-
-        Note:
-            Be cautious when deleting or renaming checkpoint files manually, as this could cause the function to reuse checkpoint numbers.
         """
         self.policy.save()
 
