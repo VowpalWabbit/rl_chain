@@ -276,7 +276,6 @@ class PickBest(base.RLChain):
         self, event: PickBest.Event, response_quality: Optional[float]
     ) -> Event:
         event.selected.score = response_quality
-        self.metrics.on_feedback(response_quality)
         return event
 
     def _call(

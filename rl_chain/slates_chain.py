@@ -266,7 +266,6 @@ class SlatesPersonalizerChain(base.RLChain):
         self, event: Event, response_quality: Optional[float]
     ) -> SlatesPersonalizerChain.Event:
         event.selected.score = response_quality
-        self.metrics.on_feedback(response_quality)
         return event
 
     def _call(

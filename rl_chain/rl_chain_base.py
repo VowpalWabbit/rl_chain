@@ -314,6 +314,7 @@ class RLChain(Chain):
             raise RuntimeError(
                 "The response validator is set, and force_score was not set to True. Please set force_score=True to use this function."
             )
+        self.metrics.on_feedback(response_quality)
         self._call_after_scoring_before_learning(event=event, response_quality=score)
         self.policy.learn(event=event)
         self.policy.log(event=event)
@@ -370,7 +371,7 @@ class RLChain(Chain):
             logger.info(
                 f"The LLM was not able to rank and the chain was not able to adjust to this response, error: {e}"
             )
-
+        self.metrics.on_feedback(response_quality)
         event = self._call_after_scoring_before_learning(
             response_quality=response_quality, event=event
         )
