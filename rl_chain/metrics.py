@@ -15,8 +15,8 @@ class MetricsTracker:
     def on_decision(self):
         self._denum += 1
 
-    def on_reward(self, event):
-        self._num += event.metrics['score']
+    def on_feedback(self, score):
+        self._num += score
         self._i += 1
         if self._step > 0 and self._i % self._step == 0:
             self._history.append({'step': self._i, 'score': self.score})
