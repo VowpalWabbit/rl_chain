@@ -5,11 +5,7 @@ from langchain.prompts.prompt import PromptTemplate
 
 from langchain.callbacks.manager import CallbackManagerForChainRun
 from langchain.chains.base import Chain
-from pydantic import Extra, PrivateAttr
 
-import pandas as pd
-import vowpal_wabbit_next as vw
-from abc import ABC, abstractmethod
 from typing import Any, Dict, List, Optional, Tuple, Union
 from itertools import chain
 import random
@@ -254,7 +250,7 @@ class SlatesPersonalizerChain(base.RLChain):
         **kwargs: Any,
     ):
         if selection_scorer is SENTINEL:
-            selection_scorer = base.AutoSelectionScorer(llm_chain.llm)
+            selection_scorer = base.AutoSelectionScorer(llm=llm_chain.llm)
         return SlatesPersonalizerChain(
             llm_chain=llm_chain,
             prompt=prompt,

@@ -3,9 +3,6 @@ from typing import Dict, Any
 
 
 class MockScorer(SelectionScorer):
-    def __init__(self):
-        ...
-
     def score_response(
         self, inputs: Dict[str, Any], llm_response: str, **kwargs
     ) -> float:
