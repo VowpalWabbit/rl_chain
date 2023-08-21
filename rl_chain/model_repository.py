@@ -7,12 +7,13 @@ import os
 import glob
 import logging
 
+logger = logging.getLogger(__name__)
+
 
 class ModelRepository:
     def __init__(
         self,
         folder: Union[str, os.PathLike],
-        logger: logging.Logger,
         with_history: bool = True,
         reset: bool = False,
     ):
@@ -27,7 +28,6 @@ class ModelRepository:
                 os.remove(self.model_path)
 
         self.folder.mkdir(parents=True, exist_ok=True)
-        self.logger = logger
 
     def get_tag(self) -> str:
         return datetime.datetime.now().strftime("%Y%m%d-%H%M%S")
@@ -37,7 +37,7 @@ class ModelRepository:
 
     def save(self, workspace: vw.Workspace) -> None:
         with open(self.model_path, "wb") as f:
-            self.logger.info(f"storing rl_chain model in: {self.model_path}")
+            logger.info(f"storing rl_chain model in: {self.model_path}")
             f.write(workspace.serialize())
         if self.with_history:  # write history
             shutil.copyfile(self.model_path, self.folder / f"model-{self.get_tag()}.vw")
@@ -48,6 +48,6 @@ class ModelRepository:
             with open(self.model_path, "rb") as f:
                 model_data = f.read()
         if model_data:
-            self.logger.info(f"rl_chain model is loaded from: {self.model_path}")
+            logger.info(f"rl_chain model is loaded from: {self.model_path}")
             return vw.Workspace(commandline, model_data=model_data)
         return vw.Workspace(commandline)
