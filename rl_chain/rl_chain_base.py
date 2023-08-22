@@ -204,7 +204,9 @@ class SelectionScorer(ABC, BaseModel):
     """Abstract method to grade the chosen selection or the response of the llm"""
 
     @abstractmethod
-    def score_response(self, inputs: Dict[str, Any], llm_response: str) -> float:
+    def score_response(
+        self, inputs: Dict[str, Any], llm_response: str, event: Event
+    ) -> float:
         pass
 
 
@@ -222,7 +224,7 @@ class AutoSelectionScorer(SelectionScorer, BaseModel):
 
     @staticmethod
     def get_default_prompt() -> ChatPromptTemplate:
-        human_template = 'Given this based_on "{rl_chain_selected_based_on}" as the most important attribute, rank how good or bad this text is: "{llm_response}".'
+        human_template = 'Given this based_on "{rl_chain_selected_based_on}" as the most important attribute, rank how good or bad this text is: "{rl_chain_selected}".'
         human_message_prompt = HumanMessagePromptTemplate.from_template(human_template)
         default_system_prompt = AutoSelectionScorer.get_default_system_prompt()
         chat_prompt = ChatPromptTemplate.from_messages(
@@ -249,7 +251,9 @@ class AutoSelectionScorer(SelectionScorer, BaseModel):
         values["llm_chain"] = LLMChain(llm=llm, prompt=prompt)
         return values
 
-    def score_response(self, inputs: Dict[str, Any], llm_response: str) -> float:
+    def score_response(
+        self, inputs: Dict[str, Any], llm_response: str, event: Event
+    ) -> float:
         ranking = self.llm_chain.predict(llm_response=llm_response, **inputs)
         ranking = ranking.strip()
         try:
@@ -283,10 +287,11 @@ class RLChain(Chain):
     prompt: BasePromptTemplate
     selection_scorer: Union[SelectionScorer, None]
     policy: Optional[Policy]
-    auto_embed: bool = True
+    auto_embed: bool = False
+    selection_scorer_activated: bool = True
+    metrics: Optional[MetricsTracker] = None
     selected_input_key = "rl_chain_selected"
     selected_based_on_input_key = "rl_chain_selected_based_on"
-    metrics: Optional[MetricsTracker] = None
 
     def __init__(
         self,
@@ -336,6 +341,42 @@ class RLChain(Chain):
         """
         return [self.output_key]
 
+    def update_with_delayed_score(
+        self, score: float, event: Event, force_score=False
+    ) -> None:
+        """
+        Learn will be called with the score specified and the actions/embeddings/etc stored in event
+
+        Will raise an error if selection_scorer is set, and force_score=True was not provided during the method call
+        """
+        if self._can_use_selection_scorer() and not force_score:
+            raise RuntimeError(
+                "The selection scorer is set, and force_score was not set to True. Please set force_score=True to use this function."
+            )
+        self.metrics.on_feedback(score)
+        self._call_after_scoring_before_learning(event=event, score=score)
+        self.policy.learn(event=event)
+        self.policy.log(event=event)
+
+    def deactivate_selection_scorer(self) -> None:
+        """
+        Deactivates the selection scorer, meaning that the chain will no longer attempt to use the selection scorer to score responses.
+        """
+        self.selection_scorer_activated = False
+
+    def activate_selection_scorer(self) -> None:
+        """
+        Activates the selection scorer, meaning that the chain will attempt to use the selection scorer to score responses.
+        """
+        self.selection_scorer_activated = True
+
+    def save_progress(self) -> None:
+        """
+        This function should be called whenever there is a need to save the progress of the VW (Vowpal Wabbit) model within the chain. It saves the current state of the VW model to a file.
+
+        """
+        self.policy.save()
+
     def _validate_inputs(self, inputs: Dict[str, Any]) -> None:
         super()._validate_inputs(inputs)
         if (
@@ -345,6 +386,12 @@ class RLChain(Chain):
             raise ValueError(
                 f"The rl chain does not accept '{self.selected_input_key}' or '{self.selected_based_on_input_key}' as input keys, they are reserved for internal use during auto reward."
             )
+
+    def _can_use_selection_scorer(self) -> bool:
+        """
+        Returns whether the chain can use the selection scorer to score responses or not.
+        """
+        return self.selection_scorer is not None and self.selection_scorer_activated
 
     @abstractmethod
     def _call_before_predict(self, inputs: Dict[str, Any]) -> Event:
@@ -367,32 +414,6 @@ class RLChain(Chain):
         self, event: Event, score: Optional[float]
     ) -> Event:
         pass
-
-    def update_with_delayed_score(
-        self, score: float, event: Event, force_score=False
-    ) -> None:
-        """
-        Learn will be called with the score specified and the actions/embeddings/etc stored in event
-
-        Will raise an error if selection_scorer is set, and force_score=True was not provided during the method call
-        """
-        if self.selection_scorer and not force_score:
-            raise RuntimeError(
-                "The selection scorer is set, and force_score was not set to True. Please set force_score=True to use this function."
-            )
-        self.metrics.on_feedback(score)
-        self._call_after_scoring_before_learning(event=event, score=score)
-        self.policy.learn(event=event)
-        self.policy.log(event=event)
-
-    def set_auto_embed(self, auto_embed: bool) -> None:
-        """
-        Set whether the chain should auto embed the inputs or not. If set to False, the inputs will not be embedded and the user will need to embed the inputs themselves before calling run.
-
-        Args:
-            auto_embed (bool): Whether the chain should auto embed the inputs or not.
-        """
-        self.auto_embed = auto_embed
 
     def _call(
         self,
@@ -429,13 +450,13 @@ class RLChain(Chain):
 
         score = None
         try:
-            if self.selection_scorer:
+            if self._can_use_selection_scorer():
                 score = self.selection_scorer.score_response(
-                    inputs=next_chain_inputs, llm_response=output
+                    inputs=next_chain_inputs, llm_response=output, event=event
                 )
         except Exception as e:
             logger.info(
-                f"The LLM was not able to rank and the chain was not able to adjust to this response, error: {e}"
+                f"The selection scorer was not able to rank and the chain was not able to adjust to this response, error: {e}"
             )
         self.metrics.on_feedback(score)
         event = self._call_after_scoring_before_learning(score=score, event=event)
@@ -443,21 +464,6 @@ class RLChain(Chain):
         self.policy.log(event=event)
 
         return {self.output_key: {"response": output, "selection_metadata": event}}
-
-    def save_progress(self) -> None:
-        """
-        This function should be called whenever there is a need to save the progress of the VW (Vowpal Wabbit) model within the chain. It saves the current state of the VW model to a file.
-
-        File Naming Convention:
-          The file will be named using the pattern `model-<checkpoint>.vw`, where `<checkpoint>` is a monotonically increasing number. The numbering starts from 1, and increments by 1 for each subsequent save. If there are already saved checkpoints, the number used for `<checkpoint>` will be the next in the sequence.
-
-        Example:
-            If there are already two saved checkpoints, `model-1.vw` and `model-2.vw`, the next time this function is called, it will save the model as `model-3.vw`.
-
-        Note:
-            Be cautious when deleting or renaming checkpoint files manually, as this could cause the function to reuse checkpoint numbers.
-        """
-        self.policy.save()
 
     @property
     def _chain_type(self) -> str:
@@ -517,6 +523,13 @@ def embed_list_type(
     for embed_item in item:
         if isinstance(embed_item, dict):
             ret_list.append(embed_dict_type(embed_item, model))
+        elif isinstance(embed_item, list):
+            item_embedding = embed_list_type(embed_item, model, namespace)
+            # Get the first key from the first dictionary
+            first_key = next(iter(item_embedding[0]))
+            # Group the values under that key
+            grouping = {first_key: [item[first_key] for item in item_embedding]}
+            ret_list.append(grouping)
         else:
             ret_list.append(embed_string_type(embed_item, model, namespace))
     return ret_list
